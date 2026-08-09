@@ -14,9 +14,10 @@ Exposes every subsystem through HTTP:
 
 from __future__ import annotations
 
+import asyncio
 import os
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 
 from pydantic import BaseModel, Field
 
@@ -44,6 +45,7 @@ from omni.simulation.engine import SIMULATION_DOMAINS, SimulationSandbox
 from omni.simulation.predictor import FailurePredictor, generate_synthetic_traces
 from omni.simulation.runner import DryRunExecutor
 from omni.twin.builder import TwinBuilder
+from omni.twin.stream import TwinBroadcaster
 
 app = FastAPI(
     title="OmniMind Control Plane",
@@ -72,6 +74,8 @@ executor = EvolutionExecutor(
     policy=policy,
     config={},
 )
+
+
 def _make_fleet_bus() -> tuple[FleetBus, str, str | None]:
     """NatsBus when NATS_URL is configured and reachable; InMemoryBus
     otherwise — a misconfigured/unreachable NATS server degrades the fleet
@@ -96,6 +100,15 @@ twin = TwinBuilder(
     simulation=simulation,
     learning=learning,
     ledger=ledger,
+)
+
+# Live twin stream (/twin/stream): every fleet bus event is forwarded to
+# connected WebSocket clients as it happens; a periodic snapshot fills the
+# gaps so a client sees state even when the fleet is quiet.
+twin_broadcaster = TwinBroadcaster()
+fleet_bus.subscribe(
+    "fleet.>",
+    lambda subject, payload: twin_broadcaster.broadcast({"type": "fleet_event", "subject": subject, "payload": payload}),
 )
 
 
@@ -570,6 +583,42 @@ def audit_replay(subject: str | None = None, subsystem: str | None = None, limit
 def twin_error(source: str, message: str) -> dict:
     twin.record_error(source, message)
     return {"recorded": True}
+
+
+TWIN_STREAM_HEARTBEAT_S = 2.0  # snapshot fallback interval when the fleet is quiet
+
+
+@app.websocket("/twin/stream")
+async def twin_stream(websocket: WebSocket) -> None:
+    """Live feed: an initial full snapshot, then every fleet bus event
+    (announce/leader.elected/queue.enqueued/queue.leased) as it happens,
+    with a periodic snapshot as a heartbeat when nothing else occurs.
+    One connection == one broadcaster subscription; dropped on disconnect."""
+    await websocket.accept()
+    loop = asyncio.get_event_loop()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    def sink(message: dict) -> None:
+        loop.call_soon_threadsafe(queue.put_nowait, message)
+
+    sub_id = twin_broadcaster.subscribe(sink)
+    try:
+        await websocket.send_json({"type": "snapshot", "data": twin.snapshot()})
+        while True:
+            try:
+                message = await asyncio.wait_for(queue.get(), timeout=TWIN_STREAM_HEARTBEAT_S)
+                await websocket.send_json(message)
+            except asyncio.TimeoutError:
+                await websocket.send_json({"type": "snapshot", "data": twin.snapshot()})
+    except WebSocketDisconnect:
+        pass
+    finally:
+        twin_broadcaster.unsubscribe(sub_id)
+
+
+@app.get("/twin/stream/subscribers")
+def twin_stream_subscribers() -> dict:
+    return {"connected": twin_broadcaster.subscriber_count()}
 
 
 # ================================================================ FLEET (M8)

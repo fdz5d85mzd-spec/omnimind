@@ -3,14 +3,15 @@
 > An autonomous, self-evolving AI operating system. It thinks. It remembers. It
 > collaborates. It builds. It improves. It evolves. Forever.
 
-**v0.5.0** — adds the **fleet message bus**: `InMemoryBus` (default) and
-`NatsBus` (real NATS server, auto-selected via `NATS_URL`), with `FleetNode`
-publishing `announce` / `leader.elected` / `queue.enqueued` / `queue.leased`
-events in real time alongside the existing polling storage. (v0.4.0: M5b
-sandboxed dry-run execution + ML failure prediction; v0.3.0: M7b mutation
-executor, knowledge fusion, skill sharing, k8s/Helm assets; v0.2.0: M4b
-remote skills + permission guard, M6b metrics store + replay ledger, M8
-fleet, SDK + CLI.)
+**v0.6.0** — adds the **live Digital Twin WebSocket stream**: `GET
+/twin/stream` pushes an initial snapshot, then every fleet bus event in
+real time (falling back to a snapshot heartbeat every 2s), so operators
+watch the system evolve instead of polling. (v0.5.0: fleet message bus —
+`InMemoryBus` default, `NatsBus` via `NATS_URL`; v0.4.0: M5b sandboxed
+dry-run execution + ML failure prediction; v0.3.0: M7b mutation executor,
+knowledge fusion, skill sharing, k8s/Helm assets; v0.2.0: M4b remote
+skills + permission guard, M6b metrics store + replay ledger, M8 fleet,
+SDK + CLI.)
 
 OmniMind is **not** a chatbot and **not** a single agent. It is a platform of
 cooperating subsystems that supervise, evaluate, constrain, remember,
@@ -72,7 +73,7 @@ omnimind fleet --capacity 64
 | Simulation Sandbox | **IMPLEMENTED + tested** | Risk estimation, rollback plans, confidence score, approval gating; **M5b: sandboxed dry-run (structural zero side effects, effect allow-list, hard budgets) + ML failure predictor (scikit-learn with pure-Python fallback)** |
 | Learning & Evaluation | **IMPLEMENTED + tested** | 12 metric dimensions, trend regression, improvement reports, **persistent EvaluationStore (M6b)** |
 | Audit & Replay | **IMPLEMENTED + tested (M6b)** | Append-only ReplayLedger: every policy decision is recorded and replayable |
-| Digital Twin | **IMPLEMENTED + tested** | Live snapshot builder + **decision replay endpoint** (agents/tasks/skills graph, costs, model usage, queues, errors) |
+| Digital Twin | **IMPLEMENTED + tested** | Live snapshot builder + decision replay endpoint (agents/tasks/skills graph, costs, model usage, queues, errors) + **live `/twin/stream` WebSocket** (initial snapshot, then real-time fleet events, 2s heartbeat) |
 | Self Evolution Engine | **IMPLEMENTED + tested** | Proposals, before/after measurement, adopt-if-gain gate, negative-evidence ledger, **autonomous mutation executor (M7b)** — adopted proposals mutate routing/config/prompts/memory, policy-gated, reversible |
 | Distributed Fleet | **IMPLEMENTED + tested (M8)** | Leader election, registry announcements, shared task queue, workload stats; **PostgresFleetStorage** adapter; **k8s manifests + Helm chart** |
 | Client SDK & CLI | **IMPLEMENTED + tested** | `OmniClient` (policy/memory/tasks/skills/simulation/twin/replay) + `omnimind` CLI with in-process `demo` |
@@ -132,13 +133,13 @@ omni/
 ├── learning/     # Learning Pipeline + persistent EvaluationStore
 ├── audit/        # ReplayLedger (append-only audit & replay)
 ├── fleet/        # Distributed fleet: nodes, election, Postgres storage, message bus (InMemoryBus/NatsBus)
-├── twin/         # Digital Twin (+ replay)
+├── twin/         # Digital Twin (+ replay + live WebSocket stream)
 ├── evolution/    # Self Evolution Engine (+ mutation executor M7b)
 ├── sdk.py        # OmniClient — talk to the control plane programmatically
 ├── cli.py        # omnimind CLI (demo/policy/memory/twin/simulate/fleet)
 └── api/          # FastAPI control plane
 deploy/           # k8s manifests (deploy/k8s) + Helm chart (deploy/helm/omnimind)
-tests/            # pytest suite (131 tests)
+tests/            # pytest suite (139 tests)
 ```
 
 See [ROADMAP.md](ROADMAP.md) for milestones M0–M8, [ARCHITECTURE.md](ARCHITECTURE.md)

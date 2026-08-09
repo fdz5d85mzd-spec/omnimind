@@ -6,9 +6,10 @@ Every decision is replayable because the twin is derived from the live state
 of the orchestrator, marketplace, memory, simulation, and learning pipeline —
 not from a separate persisted model.
 
-NOT IMPLEMENTED (roadmap M6b): persistent replay ledger, historical trend
-series for counters (CPU/RAM/network), and the live WebSocket stream. The
-snapshot builder itself is complete and tested.
+`replay()` reads the persistent `ReplayLedger` (M6b); `omni/twin/stream.py`
++ the `/twin/stream` WebSocket route provide the live push feed. NOT
+IMPLEMENTED: historical trend series for the numeric counters themselves
+(CPU/RAM/network) — the counters are point-in-time, not time series.
 """
 
 from __future__ import annotations

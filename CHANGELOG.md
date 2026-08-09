@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.6.0] — 2026-08-10
+
+### Added — Live Digital Twin WebSocket stream
+- `omni/twin/stream.py` — `TwinBroadcaster`: process-local fan-out, one
+  sink per connected client; a sink that raises (dead connection) is
+  pruned automatically without breaking delivery to the rest.
+- `GET /twin/stream` (WebSocket) — sends an initial full `twin.snapshot()`,
+  then every fleet bus event (`announce` / `leader.elected` /
+  `queue.enqueued` / `queue.leased`) live as it happens, bridged from the
+  synchronous fleet bus callback onto the connection's asyncio loop via
+  `call_soon_threadsafe`; falls back to a snapshot heartbeat every 2s when
+  the fleet is quiet. `GET /twin/stream/subscribers` reports the open
+  connection count.
+- No new runtime dependency: `uvicorn[standard]` (already pinned) bundles
+  the `websockets` package needed to serve real WebSocket connections.
+- Tests: `tests/test_twin_stream.py` (8) — `TwinBroadcaster` fan-out/prune
+  semantics, plus end-to-end WebSocket tests via FastAPI's `TestClient`
+  (initial snapshot, live fleet-event forwarding, subscriber-count
+  accuracy). Suite grows 131 → 139 tests.
+
 ## [0.5.0] — 2026-08-10
 
 ### Added — Fleet message bus (real-time pub/sub)
