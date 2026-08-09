@@ -1,6 +1,7 @@
 """Distributed fleet (M8) — leader-elected orchestrator, health-based
-rebalancing, and pluggable Postgres-backed storage."""
+rebalancing, pluggable Postgres-backed storage, and a real-time event bus."""
 
+from omni.fleet.bus import FleetBus, InMemoryBus, NatsBus, Subscription, make_bus
 from omni.fleet.node import FleetNode
 from omni.fleet.protocol import (
     LeaderInfo,
@@ -20,4 +21,9 @@ __all__ = [
     "WorkloadStats",
     "FleetStorage",
     "PostgresFleetStorage",
+    "FleetBus",
+    "InMemoryBus",
+    "NatsBus",
+    "Subscription",
+    "make_bus",
 ]

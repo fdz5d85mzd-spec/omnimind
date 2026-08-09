@@ -14,6 +14,8 @@ Exposes every subsystem through HTTP:
 
 from __future__ import annotations
 
+import os
+
 from fastapi import FastAPI, HTTPException
 
 from pydantic import BaseModel, Field
@@ -27,6 +29,7 @@ from omni.contracts.policy import LimitPolicy, PolicyRule, Principal, Resource
 from omni.contracts.skill import SkillInterface, SkillKind
 from omni.evolution.engine import DOMAINS, EvolutionEngine
 from omni.evolution.executor import MUTATION_TARGETS, EvolutionExecutor
+from omni.fleet.bus import FleetBus, InMemoryBus
 from omni.fleet.node import FleetNode
 from omni.fleet.protocol import NodeHealth
 from omni.fleet.storage import InMemoryFleetStorage
@@ -69,7 +72,23 @@ executor = EvolutionExecutor(
     policy=policy,
     config={},
 )
-node = FleetNode(storage=InMemoryFleetStorage(), capacity=64)
+def _make_fleet_bus() -> tuple[FleetBus, str, str | None]:
+    """NatsBus when NATS_URL is configured and reachable; InMemoryBus
+    otherwise — a misconfigured/unreachable NATS server degrades the fleet
+    to polling-only rather than crashing the control plane at startup."""
+    url = os.environ.get("NATS_URL")
+    if not url:
+        return InMemoryBus(), "in_memory", None
+    try:
+        from omni.fleet.bus import NatsBus
+
+        return NatsBus(url), "nats", None
+    except Exception as e:  # pragma: no cover - exercised only with NATS_URL set
+        return InMemoryBus(), "in_memory", f"NATS_URL set but connect failed, fell back: {e}"
+
+
+fleet_bus, fleet_bus_backend, fleet_bus_fallback_reason = _make_fleet_bus()
+node = FleetNode(storage=InMemoryFleetStorage(), capacity=64, bus=fleet_bus)
 twin = TwinBuilder(
     orchestrator=orchestrator,
     marketplace=marketplace,
@@ -594,6 +613,24 @@ def fleet_adopt() -> dict:
 @app.get("/fleet/leader")
 def fleet_leader() -> dict:
     return node.storage.get_leader() or {"leader": None, "term": 0}
+
+
+@app.get("/fleet/bus/status")
+def fleet_bus_status() -> dict:
+    return {
+        "backend": fleet_bus_backend,  # "nats" or "in_memory"
+        "fallback_reason": fleet_bus_fallback_reason,  # set only if NATS_URL was configured but unreachable
+        "configured_url": os.environ.get("NATS_URL"),
+    }
+
+
+@app.get("/fleet/bus/events")
+def fleet_bus_events(limit: int = 50) -> list[dict]:
+    """Recent published fleet events — only available on the in-memory bus
+    (a real NATS server has no built-in replay; subscribe for a live feed)."""
+    if not isinstance(fleet_bus, InMemoryBus):
+        raise HTTPException(400, "event history is only available on the in-memory bus backend")
+    return [{"subject": s, "payload": p} for s, p in fleet_bus.published[-limit:]]
 
 
 # ================================================================ EVOLUTION

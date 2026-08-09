@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "omnimind"
-version = "0.4.0"
+version = "0.5.0"
 description = "OmniMind - an autonomous, self-evolving AI operating system"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -21,6 +21,7 @@ dev = [
     "httpx>=0.27",
     "psycopg[binary]>=3.1",  # optional: PostgresFleetStorage (M8)
     "scikit-learn>=1.3",    # optional: ML failure predictor (M5b)
+    "nats-py>=2.7",         # optional: NatsBus fleet message bus (M8+)
 ]
 
 [project.scripts]

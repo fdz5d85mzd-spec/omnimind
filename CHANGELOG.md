@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.5.0] — 2026-08-10
+
+### Added — Fleet message bus (real-time pub/sub)
+- `omni/fleet/bus.py` — `FleetBus` interface, `InMemoryBus` (synchronous,
+  zero-dependency, NATS-style `*`/`>` subject wildcards, default backend),
+  `NatsBus` (real NATS server via `nats-py`, imported lazily; bridges the
+  async client onto a background event-loop thread so the rest of the
+  platform's synchronous API is unchanged).
+- `FleetNode` now publishes real-time events alongside the existing
+  polling storage: `fleet.<node_id>.announce`, `fleet.leader.elected`
+  (winner only), `fleet.queue.enqueued`, `fleet.queue.leased`. The `bus`
+  constructor arg is optional — polling-only usage is unaffected.
+- API: `GET /fleet/bus/status` (backend in use + fallback reason), `GET
+  /fleet/bus/events` (recent published events, in-memory backend only).
+- The control plane picks `NatsBus` automatically when `NATS_URL` is set
+  and reachable; an unreachable/misconfigured NATS server falls back to
+  `InMemoryBus` instead of crashing startup.
+- Tests: `tests/test_fleet_bus.py` (13), `tests/test_api_fleet_bus.py` (3)
+  — suite grows 115 → 131 tests. `NatsBus` itself is not unit-tested (needs
+  a live NATS server) — same policy as `PostgresFleetStorage`.
+
 ## [0.4.0] — 2026-08-09
 
 ### Added — M5b: sandboxed dry-run execution + ML failure prediction

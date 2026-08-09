@@ -3,12 +3,14 @@
 > An autonomous, self-evolving AI operating system. It thinks. It remembers. It
 > collaborates. It builds. It improves. It evolves. Forever.
 
-**v0.4.0** — closes the last roadmap milestone: **M5b sandboxed dry-run
-execution + ML-based failure prediction** (`DryRunExecutor` with a structural
-zero-side-effect backend, and a `FailurePredictor` trained on execution traces
-via scikit-learn with a pure-Python fallback). (v0.3.0: M7b mutation executor,
-knowledge fusion, skill sharing, k8s/Helm assets; v0.2.0: M4b remote skills +
-permission guard, M6b metrics store + replay ledger, M8 fleet, SDK + CLI.)
+**v0.5.0** — adds the **fleet message bus**: `InMemoryBus` (default) and
+`NatsBus` (real NATS server, auto-selected via `NATS_URL`), with `FleetNode`
+publishing `announce` / `leader.elected` / `queue.enqueued` / `queue.leased`
+events in real time alongside the existing polling storage. (v0.4.0: M5b
+sandboxed dry-run execution + ML failure prediction; v0.3.0: M7b mutation
+executor, knowledge fusion, skill sharing, k8s/Helm assets; v0.2.0: M4b
+remote skills + permission guard, M6b metrics store + replay ledger, M8
+fleet, SDK + CLI.)
 
 OmniMind is **not** a chatbot and **not** a single agent. It is a platform of
 cooperating subsystems that supervise, evaluate, constrain, remember,
@@ -129,14 +131,14 @@ omni/
 ├── simulation/   # Simulation Sandbox (engine + M5b dry-run runner + ML predictor)
 ├── learning/     # Learning Pipeline + persistent EvaluationStore
 ├── audit/        # ReplayLedger (append-only audit & replay)
-├── fleet/        # Distributed fleet: nodes, election, Postgres storage
+├── fleet/        # Distributed fleet: nodes, election, Postgres storage, message bus (InMemoryBus/NatsBus)
 ├── twin/         # Digital Twin (+ replay)
 ├── evolution/    # Self Evolution Engine (+ mutation executor M7b)
 ├── sdk.py        # OmniClient — talk to the control plane programmatically
 ├── cli.py        # omnimind CLI (demo/policy/memory/twin/simulate/fleet)
 └── api/          # FastAPI control plane
 deploy/           # k8s manifests (deploy/k8s) + Helm chart (deploy/helm/omnimind)
-tests/            # pytest suite (114 tests)
+tests/            # pytest suite (131 tests)
 ```
 
 See [ROADMAP.md](ROADMAP.md) for milestones M0–M8, [ARCHITECTURE.md](ARCHITECTURE.md)

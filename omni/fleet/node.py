@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from omni.fleet.bus import FleetBus
 from omni.fleet.protocol import NodeAnnouncement, NodeHealth, WorkloadStats, node_id
 from omni.fleet.storage import FleetStorage
 
@@ -27,12 +28,18 @@ class FleetNode:
         node_id_value: str | None = None,
         capacity: int = 32,
         version: str = "0.4.0",
+        bus: FleetBus | None = None,
     ) -> None:
         self.storage = storage
         self.id = node_id_value or node_id()
         self.capacity = capacity
         self.version = version
+        self.bus = bus  # optional real-time event bus (InMemoryBus / NatsBus); None = polling-only
         self._announcement_key = f"fleet.node.{self.id}"
+
+    def _publish(self, subject: str, payload: dict[str, Any]) -> None:
+        if self.bus is not None:
+            self.bus.publish(subject, payload)
 
     # ------------------------------------------------------------ registry
     def announce(self, health: NodeHealth | None = None) -> dict[str, Any]:
@@ -42,7 +49,9 @@ class FleetNode:
             capacity=self.capacity,
             health=health,
         )
-        return self.storage.announce(self._announcement_key, announcement.model_dump(mode="json"))
+        result = self.storage.announce(self._announcement_key, announcement.model_dump(mode="json"))
+        self._publish(f"fleet.{self.id}.announce", result)
+        return result
 
     def peers(self) -> list[dict[str, Any]]:
         return [n for n in self.storage.nodes() if n.get("node") != self.id]
@@ -64,7 +73,9 @@ class FleetNode:
         current = self.storage.get_leader()
         if best["node"] == self.id:
             term = (current["term"] + 1) if current else 1
-            return self.storage.set_leader(self.id, term)
+            result = self.storage.set_leader(self.id, term)
+            self._publish("fleet.leader.elected", result)
+            return result
         term = current["term"] if current and current["leader"] == best["node"] else 0
         return {"leader": best["node"], "term": term}
 
@@ -85,8 +96,13 @@ class FleetNode:
 
     # ------------------------------------------------------------ tasks
     def enqueue(self, task: dict[str, Any]) -> dict[str, Any]:
-        return self.storage.enqueue(task)
+        result = self.storage.enqueue(task)
+        self._publish("fleet.queue.enqueued", result)
+        return result
 
     def adopt_task(self) -> dict[str, Any] | None:
         """Lease one global task for this node to execute."""
-        return self.storage.lease_task(self.id)
+        task = self.storage.lease_task(self.id)
+        if task is not None:
+            self._publish("fleet.queue.leased", {"node": self.id, **task})
+        return task
