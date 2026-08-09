@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: omnimind-config
+  namespace: omnimind
+data:
+  OMNIMIND_DB: /data/omnimind.db
+  OMNIMIND_LOG_LEVEL: info

@@ -1,0 +1,113 @@
+# Changelog
+
+## [0.4.0] — 2026-08-09
+
+### Added — M5b: sandboxed dry-run execution + ML failure prediction
+- `omni/simulation/runner.py` — `DryRunExecutor` + `NoopEffectBackend`: executes a
+  plan step-by-step with **zero real side effects**, enforced structurally
+  (mock effect backend with no system access, explicit effect allow-list,
+  hard budgets for steps / simulated time / effects; skip + flag beyond
+  budgets; simulated failures per step).
+- `omni/simulation/predictor.py` — `FailurePredictor`: trains on execution
+  traces with **scikit-learn** (RandomForest) or a **pure-Python logistic
+  fallback** (auto-detected; degrades gracefully); `generate_synthetic_traces`
+  seeds training data; `save`/`load` persistence; predicts failure
+  probability, risk level, and top failure modes per plan.
+- API: `/simulation/dryrun`, `/simulation/predict`,
+  `/simulation/predictor/status`, `/simulation/predictor/train`.
+- CLI: `omnimind dryrun`, `omnimind predict` (inline `--plan` or `--plan-file`).
+- SDK: `OmniClient.dry_run`, `predict_failure`, `predictor_status`,
+  `train_predictor`.
+- Tests: `test_dryrun.py` (8), `test_predictor.py` (7), `test_api_m5b.py` (5)
+  — suite grows 94 → 114 tests.
+
+### Changed
+- Version bumped to 0.4.0 (`omni/__init__.py`, `pyproject.toml`, fleet
+  protocol/node defaults, k8s/Helm image tags).
+- `dev` extras gain `scikit-learn>=1.3` (optional ML dependency).
+
+## [0.3.0] — 2026-08-09
+
+### Added — M7b: Self Evolution mutation executor
+- `omni/evolution/executor.py` — `EvolutionExecutor` applies **adopted**
+  proposals as live mutations: `routing` / `orchestrator_config`
+  (dotted-config writes with before/after capture), `prompt` (new immutable
+  memory version per task type), `memory_layout` (branch creation).
+- Every mutation is **policy-gated** (new seed rule `rule_allow_evolution_apply`;
+  default deny) and **ledger-recorded** (`subsystem="evolution"`); config and
+  prompt mutations are **reversible** (`revert` restores the before-state as a
+  new version; memory branches are retained by immutability).
+- API: `/evolution/apply`, `/evolution/revert`, `/evolution/mutations`,
+  `/evolution/targets`. Tests: `tests/test_evolution_executor.py` (6 tests).
+
+### Added — M8: skill sharing, knowledge fusion, deployment assets
+- `omni/marketplace/catalog.py` — `export_manifest` / `import_manifest`:
+  share skills between catalogs with duplicate-id and version-ordering guards.
+  Tests: `tests/test_skill_share.py` (4 tests).
+- `omni/memory/fusion.py` — `MemoryFuser` (cross-session knowledge fusion):
+  `newest` and `merge` (recursive deep-merge) strategies consolidate branched
+  memories back into a target branch; source branches are never touched;
+  unchanged keys are not rewritten. Tests: `tests/test_memory_fusion.py`
+  (4 tests).
+- `deploy/k8s/` — namespace, configmap, PVC, deployment (with readiness/
+  liveness probes, resource requests/limits), service, `kustomization.yaml`.
+- `deploy/helm/omnimind/` — Chart.yaml, values.yaml, deployment/service/PVC
+  templates.
+
+### Changed
+- Version bumped to 0.3.0 (`omni/__init__.py`, `pyproject.toml`).
+- `EvolutionEngine` gains a public `get()` (used by the executor).
+- Test suite grew from 79 → 94 tests (all passing).
+
+## [0.2.0] — 2026-08-08
+
+### Added — M4b: Dynamic Skill Marketplace extensions
+- `omni/marketplace/remote.py` — `RemoteSkillRegistry`: syncs versioned skill
+  manifests from arbitrary registry URLs; provenance stamped (`source_url`,
+  `last_synced`); older versions skipped; no-op on re-sync.
+- `omni/marketplace/security.py` — `SkillPermissionGuard`: enforces a skill's
+  declared `interface.permissions` against agent grant sets, with central
+  Policy Engine fallback (default deny).
+- API: `/marketplace/remote/register`, `/marketplace/remote/sync`,
+  `/marketplace/remote/sources`, `/marketplace/authorize`.
+
+### Added — M6b: persistent metrics store + replayable audit ledger
+- `omni/learning/store.py` — `EvaluationStore` (SQLite): evaluations survive
+  process restarts; pipeline reads history/trends from the store when wired.
+- `omni/learning/aggregate.py` — shared aggregation/trend helpers used by both
+  the in-memory pipeline and the persistent store.
+- `omni/audit/ledger.py` — `ReplayLedger`: append-only, queryable record of
+  every system decision; `PolicyEngine` now records every decision into it.
+- API: `/twin/replay`, `/audit/replay`.
+
+### Added — M8: distributed fleet
+- `omni/fleet/protocol.py` — `NodeAnnouncement`, `NodeHealth`, `WorkloadStats`,
+  `LeaderInfo`, node id generation.
+- `omni/fleet/node.py` — `FleetNode`: announce into registry, deterministic
+  leader election (capacity → node-id tie-break), workload stats from a local
+  orchestrator, enqueue/adopt shared tasks.
+- `omni/fleet/storage.py` — `FleetStorage` interface, `InMemoryFleetStorage`
+  (tests), `PostgresFleetStorage` (production: schema init, atomic leasing via
+  `FOR UPDATE SKIP LOCKED`).
+- API: `/fleet/status`, `/fleet/announce`, `/fleet/elect`, `/fleet/enqueue`,
+  `/fleet/adopt`, `/fleet/leader`. CLI: `omnimind fleet`.
+
+### Added — Client SDK + CLI
+- `omni/sdk.py` — `OmniClient` with injectable transport (HTTP default):
+  policy, memory, tasks, skills, simulation, twin, replay.
+- `omni/cli.py` — `omnimind` CLI: `version`, `demo` (in-process platform run),
+  `policy`, `memory`, `twin`, `simulate`, `fleet`.
+
+### Changed
+- Version bumped to 0.2.0.
+- `PolicyDecision` carries `principal_id`; the Policy Engine records every
+  decision into an optional `ReplayLedger`.
+- `MetaOrchestrator` exposes `arrival_rate()` and `total_cost()` for fleet
+  workload stats.
+- Seed rules gain `rule_allow_skill_ops` (operator/admin may operate skills).
+- Test suite grew from 52 → 79 tests.
+
+## [0.1.0] — 2026-08-07
+Initial platform: contracts, Policy Engine, Versioned Memory, Meta-Orchestrator,
+Skill Marketplace core, Simulation Sandbox, Learning Pipeline, Digital Twin,
+Self Evolution Engine, FastAPI control plane, 52 tests.

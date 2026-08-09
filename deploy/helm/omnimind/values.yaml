@@ -1,0 +1,24 @@
+replicaCount: 1
+
+image:
+  repository: omnimind
+  tag: "0.4.0"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8000
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+persistence:
+  size: 5Gi
+
+env:
+  OMNIMIND_LOG_LEVEL: info

@@ -1,0 +1,13 @@
+services:
+  omnimind:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      OMNIMIND_DB: /data/omnimind.db
+    volumes:
+      - omnimind_data:/data
+    restart: unless-stopped
+
+volumes:
+  omnimind_data:
