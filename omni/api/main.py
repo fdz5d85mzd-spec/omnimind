@@ -27,6 +27,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from omni import __version__
+from omni.agents.fleet_seed import seed_fleet
 from omni.agents.runner import AgentRunner
 from omni.audit.ledger import ReplayLedger
 from omni.contracts.agent import TaskSpec
@@ -39,6 +40,7 @@ from omni.evolution.executor import MUTATION_TARGETS, EvolutionExecutor
 from omni.fleet.bus import FleetBus, InMemoryBus
 from omni.fleet.node import FleetNode
 from omni.fleet.protocol import NodeHealth
+from omni.fleet.scheduler import FleetScheduler
 from omni.fleet.storage import InMemoryFleetStorage
 from omni.learning.pipeline import LearningPipeline
 from omni.marketplace.catalog import SkillCatalog
@@ -92,6 +94,7 @@ ledger = ReplayLedger()
 policy = PolicyEngine(make_seed_rules(), ledger=ledger)
 memory = MemoryStore()
 orchestrator = MetaOrchestrator()
+seed_fleet(orchestrator)  # 40 named agents + one leader, idempotent by name
 marketplace = SkillCatalog()
 remote_registry = RemoteSkillRegistry(marketplace)
 skill_guard = SkillPermissionGuard(policy=policy)
@@ -147,6 +150,22 @@ fleet_bus.subscribe(
     ">",
     lambda subject, payload: twin_broadcaster.broadcast({"type": "fleet_event", "subject": subject, "payload": payload}),
 )
+
+# Every 60s: rebalance queued work across the fleet and publish a real
+# tick (report + move count) to the bus — visible live in Mission
+# Control. This is what makes the fleet autonomous rather than just a
+# static roster; it does real work on a real clock, not a fake heartbeat.
+fleet_scheduler = FleetScheduler(orchestrator, fleet_bus, interval_s=60.0)
+
+
+@app.on_event("startup")
+async def _start_fleet_scheduler() -> None:
+    fleet_scheduler.start()
+
+
+@app.on_event("shutdown")
+async def _stop_fleet_scheduler() -> None:
+    fleet_scheduler.stop()
 
 
 @app.get("/")

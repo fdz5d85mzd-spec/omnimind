@@ -43,10 +43,16 @@ def test_memory_endpoints():
 
 
 def test_orchestrator_roundtrip():
-    r = client.post("/agents/register", json={"name": "w1"})
+    # A unique required skill makes the assignment deterministic even
+    # against the standing 40-agent fleet seeded at startup — only the
+    # agent just registered here can match it.
+    r = client.post("/agents/register", json={"name": "w1", "skills": ["roundtrip-test-skill"]})
     assert r.status_code == 200
     agent_id = r.json()["id"]
-    r = client.post("/tasks/submit", json={"name": "t", "risk_level": "low"})
+    r = client.post(
+        "/tasks/submit",
+        json={"name": "t", "risk_level": "low", "required_skills": ["roundtrip-test-skill"]},
+    )
     task_id = r.json()["id"]
     r = client.post(f"/tasks/{task_id}/assign")
     assert r.status_code == 200

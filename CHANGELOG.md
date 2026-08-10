@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.11.0] — 2026-08-10
+
+### Added — Standing 40-agent fleet with a leader
+- `omni/agents/fleet_seed.py` — `SEED_ROSTER`: 40 named agents (Atlas, the
+  SUPERVISOR/leader, plus 39 WORKER/SPECIALIST agents spanning research,
+  writing, code, security, DevOps, memory, marketplace, QA, and more).
+  `seed_fleet()` registers every agent not already present by name —
+  idempotent across restarts, coexists with any manually-registered agent.
+  Registered through the real `MetaOrchestrator.register_agent()` — these
+  are actual entries in `/agents`, `/orchestrator/report`, and the twin
+  snapshot, not decoration.
+- `omni/fleet/scheduler.py` — `FleetScheduler`: every 60 seconds, calls the
+  orchestrator's real `balance()` and publishes the resulting report to
+  the fleet bus as `fleet.scheduler.tick` — visible live in Mission
+  Control. This is what makes the fleet autonomous: a real scheduled cycle
+  doing real rebalancing, not a fake "online" badge.
+- `omni/api/main.py` — seeds the fleet at import time and starts/stops the
+  scheduler on FastAPI startup/shutdown.
+- Tests: `tests/test_fleet_seed.py` (roster shape, idempotency, leader
+  resolution) and `tests/test_fleet_scheduler.py` (tick publishes to the
+  bus, tick actually rebalances). `tests/test_api.py::test_orchestrator_roundtrip`
+  updated to require a unique skill, since assignment is no longer
+  deterministic against an empty registry now that a fleet is seeded by
+  default. Suite: 185 tests passing.
+
 ## [0.10.0] — 2026-08-10
 
 ### Added — Admin action guard + keep-alive
