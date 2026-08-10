@@ -375,6 +375,14 @@ def make_seed_rules() -> list[PolicyRule]:
             risk_level=None,
         ),
         PolicyRule(
+            id="rule_allow_web_agent_run",
+            action="agent.run",
+            effect="ALLOW",
+            roles=["web-user", "operator", "system.admin"],
+            conditions=[ABACCondition(field="resource.risk_level", op="lte", value="low")],
+            priority=95,
+        ),
+        PolicyRule(
             id="rule_allow_read",
             action="memory.read",
             effect="ALLOW",

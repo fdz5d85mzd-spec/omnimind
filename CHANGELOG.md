@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.8.0] — 2026-08-10
+
+### Added — Public agent runner (`POST /agent/run`)
+- `omni/agents/llm.py` — provider-agnostic LLM call (OpenAI or Anthropic,
+  via `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`, stdlib `urllib` only, no new
+  runtime dependency). No key configured raises `LLMNotConfigured` — the
+  caller sees a real "not configured" state, never a fabricated answer.
+- `omni/agents/runner.py` — `AgentRunner`: the "ask anything" entry point.
+  Every call runs through the real Policy Engine (new seed rule
+  `rule_allow_web_agent_run` for a `web-user` role), records the prompt
+  and answer as real Versioned Memory entries, registers a real
+  Meta-Orchestrator agent + task, and publishes every stage
+  (`started` / `policy_evaluated` / `memory_stored` / `task_assigned` /
+  `thinking` / `completed` or `failed`) to the fleet bus — visible live
+  over `/twin/stream` to any connected UI.
+- API: `POST /agent/run` (distinct from `/agents/*`, the orchestrator's
+  internal fleet registry).
+- CORS enabled (`allow_origins=["*"]`) so a separately-hosted frontend
+  (the public chat UI) can call this API cross-origin.
+- Tests: `tests/test_llm.py` (6), `tests/test_agent_runner.py` (5),
+  `tests/test_api_agent_run.py` (4) — suite grows 143 → 158 tests.
+
 ## [0.7.0] — 2026-08-10
 
 ### Added — Live dashboard UI

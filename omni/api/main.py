@@ -20,11 +20,13 @@ import os
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from pydantic import BaseModel, Field
 
 from omni import __version__
+from omni.agents.runner import AgentRunner
 from omni.audit.ledger import ReplayLedger
 from omni.contracts.agent import TaskSpec
 from omni.contracts.evaluation import Evaluation, MetricBundle
@@ -58,6 +60,17 @@ app = FastAPI(
 
 STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/dashboard", StaticFiles(directory=STATIC_DIR, html=True), name="dashboard")
+
+# The control plane is called from separate frontend origins (the ops
+# dashboard is same-origin under /dashboard, but the public "ask anything"
+# UI is its own deployment) — allow any origin rather than hard-coding one,
+# since this API exposes no cookie-based auth to protect against CSRF.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ------------------------------------------------------------ subsystems
 ledger = ReplayLedger()
@@ -108,12 +121,15 @@ twin = TwinBuilder(
     ledger=ledger,
 )
 
-# Live twin stream (/twin/stream): every fleet bus event is forwarded to
-# connected WebSocket clients as it happens; a periodic snapshot fills the
-# gaps so a client sees state even when the fleet is quiet.
+agent_runner = AgentRunner(policy=policy, memory=memory, orchestrator=orchestrator, bus=fleet_bus)
+
+# Live twin stream (/twin/stream): every bus event — fleet coordination
+# AND agent runs — is forwarded to connected WebSocket clients as it
+# happens; a periodic snapshot fills the gaps so a client sees state even
+# when nothing else is happening.
 twin_broadcaster = TwinBroadcaster()
 fleet_bus.subscribe(
-    "fleet.>",
+    ">",
     lambda subject, payload: twin_broadcaster.broadcast({"type": "fleet_event", "subject": subject, "payload": payload}),
 )
 
@@ -191,6 +207,11 @@ class LearningIngestBody(BaseModel):
 class AgentRegisterBody(BaseModel):
     name: str
     skills: list[str] = Field(default_factory=list)
+
+
+class AgentRunBody(BaseModel):
+    prompt: str
+    session_id: str | None = None
 
 
 class TaskHeartbeatBody(BaseModel):
@@ -409,6 +430,17 @@ def orchestrator_terminate_idle() -> list[str]:
 @app.get("/orchestrator/predict")
 def orchestrator_predict(horizon_minutes: float = 10.0) -> dict:
     return {"predicted_tasks": orchestrator.predict_next_tasks(horizon_minutes)}
+
+
+# ================================================================ PUBLIC AGENT
+# The public "ask anything" entry point (distinct from /agents/* above,
+# which is the Meta-Orchestrator's internal fleet registry). Every call
+# runs through the real Policy Engine, Meta-Orchestrator and Versioned
+# Memory, publishing each stage live to /twin/stream — see omni/agents/.
+@app.post("/agent/run")
+def agent_run(body: AgentRunBody) -> dict:
+    result = agent_runner.run(body.prompt, session_id=body.session_id or "anonymous")
+    return result.to_dict()
 
 
 # ================================================================ MARKETPLACE
