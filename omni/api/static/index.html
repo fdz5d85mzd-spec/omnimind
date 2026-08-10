@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>OmniMind — Live Dashboard</title>
+<style>
+  :root {
+    --bg: #0a0e2e;
+    --card: #12163f;
+    --card2: #171c4d;
+    --primary: #1e2761;
+    --accent: #5b6ef5;
+    --cyan: #22d3ee;
+    --white: #ffffff;
+    --muted: #9ca3d4;
+    --muted-dark: #6b72a8;
+    --red: #f87171;
+    --green: #34d399;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--white);
+    font-family: Calibri, "Segoe UI", Arial, sans-serif;
+    min-height: 100vh;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 32px;
+    border-bottom: 1px solid var(--card2);
+  }
+  .brand { display: flex; align-items: center; gap: 14px; }
+  .brand h1 {
+    font-family: Cambria, Georgia, serif;
+    font-size: 22px;
+    letter-spacing: 1px;
+    margin: 0;
+  }
+  .status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--red); transition: background .2s; }
+  .dot.live { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  main { padding: 28px 32px 60px; max-width: 1400px; margin: 0 auto; }
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 14px;
+    margin-bottom: 28px;
+  }
+  .stat {
+    background: var(--card);
+    border-radius: 10px;
+    padding: 18px 16px;
+  }
+  .stat .value { font-family: Cambria, Georgia, serif; font-size: 30px; font-weight: bold; color: var(--cyan); }
+  .stat .label { font-size: 11.5px; color: var(--muted); margin-top: 4px; }
+  .cols { display: grid; grid-template-columns: 1.1fr 1fr; gap: 20px; }
+  .panel { background: var(--card); border-radius: 12px; padding: 20px; }
+  .panel h2 {
+    font-family: Cambria, Georgia, serif;
+    font-size: 15px;
+    margin: 0 0 14px;
+    color: var(--white);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .panel h2 span { font-size: 11px; color: var(--muted-dark); font-weight: normal; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th { text-align: left; color: var(--muted-dark); font-weight: normal; padding: 6px 8px; border-bottom: 1px solid var(--card2); font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
+  td { padding: 8px; border-bottom: 1px solid var(--card2); color: var(--muted); }
+  td.name { color: var(--white); font-weight: bold; }
+  .empty { color: var(--muted-dark); font-style: italic; padding: 14px 8px; font-size: 12.5px; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 10.5px; background: var(--primary); color: var(--cyan); }
+  #events { max-height: 480px; overflow-y: auto; }
+  .event { display: flex; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--card2); font-size: 12px; }
+  .event:last-child { border-bottom: none; }
+  .event .subject { color: var(--cyan); font-family: "Courier New", monospace; font-size: 11px; white-space: nowrap; }
+  .event .payload { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .event .t { color: var(--muted-dark); font-size: 10.5px; white-space: nowrap; }
+  .subsystems { margin-top: 24px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .subsystems span {
+    background: var(--card);
+    color: var(--muted);
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 11.5px;
+  }
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-thumb { background: var(--card2); border-radius: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <h1>OMNIMIND</h1>
+    <span class="badge" id="version">—</span>
+  </div>
+  <div class="status"><span class="dot" id="dot"></span><span id="statusText">connecting…</span></div>
+</header>
+<main>
+  <div class="stats">
+    <div class="stat"><div class="value" id="s-running">0</div><div class="label">Agents running</div></div>
+    <div class="stat"><div class="value" id="s-waiting">0</div><div class="label">Agents waiting</div></div>
+    <div class="stat"><div class="value" id="s-queued">0</div><div class="label">Tasks queued</div></div>
+    <div class="stat"><div class="value" id="s-taskrunning">0</div><div class="label">Tasks running</div></div>
+    <div class="stat"><div class="value" id="s-cost">$0</div><div class="label">Total cost</div></div>
+    <div class="stat"><div class="value" id="s-errors">0</div><div class="label">Errors (window)</div></div>
+  </div>
+
+  <div class="cols">
+    <div class="panel">
+      <h2>Agents <span id="agents-count">0 total</span></h2>
+      <table>
+        <thead><tr><th>Name</th><th>Status</th><th>Load</th><th>Model</th></tr></thead>
+        <tbody id="agents-body"></tbody>
+      </table>
+      <div class="empty" id="agents-empty">No agents registered yet — this is expected on a fresh instance.</div>
+    </div>
+
+    <div class="panel">
+      <h2>Live fleet events <span id="events-count">0 seen</span></h2>
+      <div id="events"></div>
+      <div class="empty" id="events-empty">Waiting for fleet activity (announce, election, queue events)…</div>
+    </div>
+  </div>
+
+  <div class="subsystems" id="subsystems"></div>
+</main>
+
+<script>
+  const dot = document.getElementById("dot");
+  const statusText = document.getElementById("statusText");
+  const versionBadge = document.getElementById("version");
+  const agentsBody = document.getElementById("agents-body");
+  const agentsEmpty = document.getElementById("agents-empty");
+  const agentsCount = document.getElementById("agents-count");
+  const eventsEl = document.getElementById("events");
+  const eventsEmpty = document.getElementById("events-empty");
+  const eventsCount = document.getElementById("events-count");
+  const subsystemsEl = document.getElementById("subsystems");
+
+  let eventTotal = 0;
+
+  fetch("/").then(r => r.json()).then(info => {
+    versionBadge.textContent = "v" + info.version;
+    subsystemsEl.innerHTML = info.subsystems.map(s => `<span>${s}</span>`).join("");
+  }).catch(() => {});
+
+  function setStat(id, value) {
+    document.getElementById(id).textContent = value;
+  }
+
+  function applySnapshot(data) {
+    const c = data.counters || {};
+    setStat("s-running", (data.agent_status_counts && data.agent_status_counts.running) || 0);
+    setStat("s-waiting", (data.agent_status_counts && data.agent_status_counts.waiting) || 0);
+    setStat("s-queued", c.tasks_queued || 0);
+    setStat("s-taskrunning", c.tasks_running || 0);
+    setStat("s-cost", "$" + (c.costs_total || 0));
+    setStat("s-errors", c.errors_last_window || 0);
+
+    const agents = data.agents || [];
+    agentsCount.textContent = agents.length + " total";
+    if (agents.length === 0) {
+      agentsBody.innerHTML = "";
+      agentsEmpty.style.display = "block";
+    } else {
+      agentsEmpty.style.display = "none";
+      agentsBody.innerHTML = agents.map(a => `
+        <tr>
+          <td class="name">${a.name}</td>
+          <td>${a.status}</td>
+          <td>${(a.load || 0).toFixed ? a.load.toFixed(2) : a.load}</td>
+          <td>${a.model || "—"}</td>
+        </tr>`).join("");
+    }
+  }
+
+  function addEvent(subject, payload) {
+    eventTotal += 1;
+    eventsCount.textContent = eventTotal + " seen";
+    eventsEmpty.style.display = "none";
+    const row = document.createElement("div");
+    row.className = "event";
+    const time = new Date().toLocaleTimeString();
+    row.innerHTML = `<span class="t">${time}</span><span class="subject">${subject}</span><span class="payload">${JSON.stringify(payload)}</span>`;
+    eventsEl.prepend(row);
+    while (eventsEl.children.length > 100) eventsEl.removeChild(eventsEl.lastChild);
+  }
+
+  function connect() {
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    const ws = new WebSocket(proto + "//" + location.host + "/twin/stream");
+
+    ws.onopen = () => {
+      dot.classList.add("live");
+      statusText.textContent = "live";
+    };
+    ws.onclose = () => {
+      dot.classList.remove("live");
+      statusText.textContent = "reconnecting…";
+      setTimeout(connect, 2000);
+    };
+    ws.onerror = () => ws.close();
+    ws.onmessage = (evt) => {
+      const msg = JSON.parse(evt.data);
+      if (msg.type === "snapshot") {
+        applySnapshot(msg.data);
+      } else if (msg.type === "fleet_event") {
+        addEvent(msg.subject, msg.payload);
+      }
+    };
+  }
+  connect();
+</script>
+</body>
+</html>

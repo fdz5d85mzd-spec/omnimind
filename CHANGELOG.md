@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.7.0] — 2026-08-10
+
+### Added — Live dashboard UI
+- `omni/api/static/index.html` — a single-file, dependency-free dashboard
+  (vanilla JS, no build step) served at `GET /dashboard`. Connects to
+  `/twin/stream`, renders live stat tiles (agents, tasks, cost, errors),
+  an agents table, and a scrolling live fleet-event log; auto-reconnects
+  on drop.
+- Mounted via `StaticFiles(html=True)` in `omni/api/main.py`.
+
+### Fixed
+- **Packaging bug that would have shipped `/dashboard` broken in
+  production**: `pip install .` (what the Dockerfile runs) silently drops
+  non-`.py` files from a package unless declared as package data —
+  `omni/api/static/index.html` was missing from a real installed copy
+  even though it worked from the source checkout (where tests run from).
+  Verified by building into a clean venv before and after the fix.
+  Added `[tool.setuptools.package-data]` (`omni = ["api/static/*"]`) to
+  `pyproject.toml`.
+- Tests: `tests/test_dashboard.py` (4), including one that guards the
+  packaging config directly so this class of bug can't silently return.
+  Suite grows 139 → 143 tests.
+
 ## [0.6.0] — 2026-08-10
 
 ### Added — Live Digital Twin WebSocket stream

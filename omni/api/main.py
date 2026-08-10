@@ -8,16 +8,19 @@ Exposes every subsystem through HTTP:
     /marketplace/*  - Skill Marketplace
     /simulation/*   - Simulation Sandbox
     /learning/*     - Learning & Evaluation Pipeline
-    /twin/*         - Digital Twin
+    /twin/*         - Digital Twin (/twin/stream is the live WebSocket feed)
     /evolution/*    - Self Evolution Engine
+    /dashboard      - Static live-dashboard UI (vanilla JS, consumes /twin/stream)
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.staticfiles import StaticFiles
 
 from pydantic import BaseModel, Field
 
@@ -52,6 +55,9 @@ app = FastAPI(
     description="An autonomous, self-evolving AI operating system.",
     version=__version__,
 )
+
+STATIC_DIR = Path(__file__).parent / "static"
+app.mount("/dashboard", StaticFiles(directory=STATIC_DIR, html=True), name="dashboard")
 
 # ------------------------------------------------------------ subsystems
 ledger = ReplayLedger()
