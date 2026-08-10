@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.9.0] — 2026-08-10
+
+### Added — Streaming agent responses (`POST /agent/run/stream`)
+- `omni/agents/llm.py` — `stream_llm()`: SSE parsing for both providers
+  (Anthropic `content_block_delta` events, OpenAI `delta.content` chunks),
+  yielding text as it's generated instead of waiting for the full
+  completion.
+- `omni/agents/runner.py` — `AgentRunner.run_stream()`: the same
+  policy/memory/orchestrator pipeline as `run()`, refactored to share a
+  `_setup()` prelude, now yielding `{"type": "delta", "text": ...}` events
+  as they arrive and a final `done`/`failed`/`denied` event. Never yields
+  partial/fabricated text if the provider isn't configured — the failure
+  is reported as a real event, same as before.
+- API: `POST /agent/run/stream` — Server-Sent Events (`text/event-stream`).
+  `POST /agent/run` (non-streaming) is unchanged for callers that don't
+  need incremental output.
+- Tests: streaming coverage added to `tests/test_llm.py`,
+  `tests/test_agent_runner.py`, and `tests/test_api_agent_run.py`. Suite
+  grows 158 → 170 tests.
+
 ## [0.8.0] — 2026-08-10
 
 ### Added — Public agent runner (`POST /agent/run`)

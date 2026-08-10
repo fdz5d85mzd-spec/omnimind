@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from omni.agents.llm import LLMError, LLMNotConfigured, call_llm
+from omni.agents.llm import LLMError, LLMNotConfigured, call_llm, stream_llm
 
 
 def test_no_key_raises_not_configured():
@@ -73,3 +73,71 @@ def test_http_error_becomes_llm_error():
         with patch("urllib.request.urlopen", side_effect=err):
             with pytest.raises(LLMError):
                 call_llm("hi")
+
+
+class _FakeSSEResponse:
+    """Iterable of SSE `data: {...}` lines, matching what urlopen() returns
+    for a streaming request (an iterable, closeable file-like object)."""
+
+    def __init__(self, lines: list[bytes]):
+        self._lines = lines
+        self.closed = False
+
+    def __iter__(self):
+        return iter(self._lines)
+
+    def close(self):
+        self.closed = True
+
+
+def _sse(*payloads: dict) -> list[bytes]:
+    return [f"data: {json.dumps(p)}\n".encode() for p in payloads] + [b"data: [DONE]\n"]
+
+
+def test_stream_no_key_raises_not_configured():
+    with patch.dict("os.environ", {}, clear=True):
+        with pytest.raises(LLMNotConfigured):
+            next(stream_llm("hello"))
+
+
+def test_stream_anthropic_yields_text_deltas_in_order():
+    lines = _sse(
+        {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Par"}},
+        {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "is."}},
+        {"type": "message_stop"},
+    )
+    with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "ak"}, clear=True):
+        with patch("urllib.request.urlopen", return_value=_FakeSSEResponse(lines)):
+            chunks = list(stream_llm("capital of France?"))
+    assert chunks == ["Par", "is."]
+
+
+def test_stream_openai_yields_text_deltas_in_order():
+    lines = _sse(
+        {"choices": [{"delta": {"content": "Par"}}]},
+        {"choices": [{"delta": {"content": "is."}}]},
+    )
+    with patch.dict("os.environ", {"OPENAI_API_KEY": "ok"}, clear=True):
+        with patch("urllib.request.urlopen", return_value=_FakeSSEResponse(lines)):
+            chunks = list(stream_llm("capital of France?"))
+    assert chunks == ["Par", "is."]
+
+
+def test_stream_closes_response_when_exhausted():
+    lines = _sse({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "hi"}})
+    fake = _FakeSSEResponse(lines)
+    with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "ak"}, clear=True):
+        with patch("urllib.request.urlopen", return_value=fake):
+            list(stream_llm("hello"))
+    assert fake.closed is True
+
+
+def test_stream_http_error_becomes_llm_error():
+    import io
+    import urllib.error
+
+    err = urllib.error.HTTPError("url", 401, "unauthorized", None, io.BytesIO(b"bad key"))
+    with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "ak"}, clear=True):
+        with patch("urllib.request.urlopen", side_effect=err):
+            with pytest.raises(LLMError):
+                list(stream_llm("hi"))

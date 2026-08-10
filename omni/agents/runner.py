@@ -7,6 +7,10 @@ publishes each stage as a live event (visible to any client connected to
 /twin/stream), and the LLM abstraction produces the actual answer. Every
 published stage marks a real thing that just happened in the backend —
 none of it is theater for a progress bar.
+
+`run()` returns the complete answer in one shot; `run_stream()` yields it
+as it's generated (text deltas) — what the chat UI actually calls, so
+typing starts immediately instead of waiting for the full completion.
 """
 
 from __future__ import annotations
@@ -14,9 +18,9 @@ from __future__ import annotations
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Iterator
 
-from omni.agents.llm import LLMError, LLMNotConfigured, call_llm
+from omni.agents.llm import LLMError, LLMNotConfigured, call_llm, stream_llm
 from omni.contracts.agent import AgentType, TaskSpec
 from omni.contracts.policy import Principal, Resource
 from omni.fleet.bus import FleetBus
@@ -53,6 +57,14 @@ class AgentRunResult:
         }
 
 
+@dataclass
+class _Setup:
+    run_id: str
+    agent_id: str
+    task_id: str
+    started: float
+
+
 class AgentRunner:
     def __init__(
         self,
@@ -70,7 +82,10 @@ class AgentRunner:
         if self._bus is not None:
             self._bus.publish(f"agent.{run_id}.{stage}", {"session_id": session_id, **payload})
 
-    def run(self, prompt: str, session_id: str = "anonymous") -> AgentRunResult:
+    def _setup(self, prompt: str, session_id: str) -> _Setup | AgentRunResult:
+        """Policy check, memory write, orchestrator registration — identical
+        prelude for both run() and run_stream(). Returns an AgentRunResult
+        directly if the policy denies the request (nothing left to do)."""
         run_id = f"run_{uuid.uuid4().hex[:10]}"
         started = time.monotonic()
         principal = Principal(id=f"web-{session_id}", roles=["web-user"])
@@ -101,21 +116,74 @@ class AgentRunner:
         self._orchestrator.assign(task.id)
         self._publish(run_id, session_id, "task_assigned", {"task_id": task.id, "agent_id": agent.id})
 
-        self._publish(run_id, session_id, "thinking", {})
+        return _Setup(run_id=run_id, agent_id=agent.id, task_id=task.id, started=started)
+
+    def run(self, prompt: str, session_id: str = "anonymous") -> AgentRunResult:
+        setup = self._setup(prompt, session_id)
+        if isinstance(setup, AgentRunResult):
+            return setup
+
+        self._publish(setup.run_id, session_id, "thinking", {})
         try:
             answer = call_llm(prompt, system=SYSTEM_PROMPT)
         except (LLMNotConfigured, LLMError) as e:
-            self._orchestrator.complete(task.id, result={"error": str(e)})
-            self._publish(run_id, session_id, "failed", {"error": str(e)})
-            return AgentRunResult(run_id=run_id, status="failed", prompt=prompt, task_id=task.id, error=str(e))
+            self._orchestrator.complete(setup.task_id, result={"error": str(e)})
+            self._publish(setup.run_id, session_id, "failed", {"error": str(e)})
+            return AgentRunResult(
+                run_id=setup.run_id, status="failed", prompt=prompt, task_id=setup.task_id, error=str(e)
+            )
 
         self._memory.write(
-            key=f"agent_run.{run_id}.answer", value={"answer": answer}, agent_id=agent.id, reason="agent response"
+            key=f"agent_run.{setup.run_id}.answer",
+            value={"answer": answer},
+            agent_id=setup.agent_id,
+            reason="agent response",
         )
-        self._orchestrator.complete(task.id, result={"answer": answer})
-        duration_ms = (time.monotonic() - started) * 1000
-        self._publish(run_id, session_id, "completed", {"answer": answer, "duration_ms": duration_ms})
+        self._orchestrator.complete(setup.task_id, result={"answer": answer})
+        duration_ms = (time.monotonic() - setup.started) * 1000
+        self._publish(setup.run_id, session_id, "completed", {"answer": answer, "duration_ms": duration_ms})
 
         return AgentRunResult(
-            run_id=run_id, status="completed", prompt=prompt, answer=answer, task_id=task.id, duration_ms=duration_ms
+            run_id=setup.run_id,
+            status="completed",
+            prompt=prompt,
+            answer=answer,
+            task_id=setup.task_id,
+            duration_ms=duration_ms,
         )
+
+    def run_stream(self, prompt: str, session_id: str = "anonymous") -> Iterator[dict[str, Any]]:
+        """Same pipeline as run(), but yields the answer as text deltas
+        arrive from the LLM provider. Each yielded dict is one of:
+          {"type": "delta", "text": str}
+          {"type": "done", "run_id", "answer", "duration_ms"}
+          {"type": "denied"|"failed", "run_id", "error"}
+        """
+        setup = self._setup(prompt, session_id)
+        if isinstance(setup, AgentRunResult):
+            yield {"type": setup.status, "run_id": setup.run_id, "error": setup.error}
+            return
+
+        self._publish(setup.run_id, session_id, "thinking", {})
+        chunks: list[str] = []
+        try:
+            for delta in stream_llm(prompt, system=SYSTEM_PROMPT):
+                chunks.append(delta)
+                yield {"type": "delta", "text": delta}
+        except (LLMNotConfigured, LLMError) as e:
+            self._orchestrator.complete(setup.task_id, result={"error": str(e)})
+            self._publish(setup.run_id, session_id, "failed", {"error": str(e)})
+            yield {"type": "failed", "run_id": setup.run_id, "error": str(e)}
+            return
+
+        answer = "".join(chunks)
+        self._memory.write(
+            key=f"agent_run.{setup.run_id}.answer",
+            value={"answer": answer},
+            agent_id=setup.agent_id,
+            reason="agent response",
+        )
+        self._orchestrator.complete(setup.task_id, result={"answer": answer})
+        duration_ms = (time.monotonic() - setup.started) * 1000
+        self._publish(setup.run_id, session_id, "completed", {"answer": answer, "duration_ms": duration_ms})
+        yield {"type": "done", "run_id": setup.run_id, "answer": answer, "duration_ms": duration_ms}

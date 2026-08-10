@@ -21,6 +21,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from pydantic import BaseModel, Field
@@ -441,6 +442,20 @@ def orchestrator_predict(horizon_minutes: float = 10.0) -> dict:
 def agent_run(body: AgentRunBody) -> dict:
     result = agent_runner.run(body.prompt, session_id=body.session_id or "anonymous")
     return result.to_dict()
+
+
+@app.post("/agent/run/stream")
+def agent_run_stream(body: AgentRunBody):
+    """Server-Sent Events: the answer arrives as text deltas, not one
+    blocking response — this is what the chat UI renders live."""
+
+    def events():
+        import json as _json
+
+        for event in agent_runner.run_stream(body.prompt, session_id=body.session_id or "anonymous"):
+            yield f"data: {_json.dumps(event)}\n\n"
+
+    return StreamingResponse(events(), media_type="text/event-stream")
 
 
 # ================================================================ MARKETPLACE

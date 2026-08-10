@@ -1,5 +1,6 @@
 """POST /agent/run API tests: the public endpoint the consumer chat UI calls."""
 
+import json
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -44,6 +45,31 @@ def test_agent_run_event_visible_on_twin_stream():
             if f"agent.{run_id}.completed" in seen_subjects:
                 break
         assert f"agent.{run_id}.completed" in seen_subjects
+
+
+def test_agent_run_stream_endpoint_sends_deltas_then_done():
+    with patch("omni.agents.runner.stream_llm", return_value=iter(["Par", "is."])):
+        r = client.post("/agent/run/stream", json={"prompt": "capital of France?", "session_id": "s1"})
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/event-stream")
+
+    lines = [ln for ln in r.text.split("\n\n") if ln.strip()]
+    events = [json.loads(ln.removeprefix("data: ")) for ln in lines]
+    assert [e for e in events if e["type"] == "delta"][0]["text"] == "Par"
+    assert [e for e in events if e["type"] == "delta"][1]["text"] == "is."
+    assert events[-1]["type"] == "done"
+    assert events[-1]["answer"] == "Paris."
+
+
+def test_agent_run_stream_without_llm_key_yields_failed_event():
+    with patch.dict("os.environ", {}, clear=True):
+        r = client.post("/agent/run/stream", json={"prompt": "hello"})
+    assert r.status_code == 200
+    lines = [ln for ln in r.text.split("\n\n") if ln.strip()]
+    events = [json.loads(ln.removeprefix("data: ")) for ln in lines]
+    assert all(e["type"] != "delta" for e in events)
+    assert events[-1]["type"] == "failed"
+    assert "API_KEY" in events[-1]["error"]
 
 
 def test_cors_allows_cross_origin_requests():

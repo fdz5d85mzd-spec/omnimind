@@ -94,3 +94,56 @@ def test_two_sessions_get_independent_run_ids_and_memory_keys():
     assert r1.run_id != r2.run_id
     assert memory.read(f"agent_run.{r1.run_id}.answer").value["answer"] == "a1"
     assert memory.read(f"agent_run.{r2.run_id}.answer").value["answer"] == "a2"
+
+
+# ------------------------------------------------------------ run_stream()
+def test_run_stream_yields_deltas_then_done():
+    runner, memory, orchestrator = _runner()
+    with patch("omni.agents.runner.stream_llm", return_value=iter(["Par", "is."])):
+        events = list(runner.run_stream("capital of France?", session_id="s1"))
+
+    delta_events = [e for e in events if e["type"] == "delta"]
+    assert [e["text"] for e in delta_events] == ["Par", "is."]
+
+    done = events[-1]
+    assert done["type"] == "done"
+    assert done["answer"] == "Paris."
+    assert memory.read(f"agent_run.{done['run_id']}.answer").value["answer"] == "Paris."
+    task = next(t for t in orchestrator.tasks() if t.id is not None and t.result == {"answer": "Paris."})
+    assert task.status.value == "completed"
+
+
+def test_run_stream_without_llm_configured_yields_failed_not_fake_text():
+    runner, _, _ = _runner()
+    with patch.dict("os.environ", {}, clear=True):
+        events = list(runner.run_stream("hello"))
+    assert all(e["type"] != "delta" for e in events)  # never fabricates partial output
+    assert events[-1]["type"] == "failed"
+    assert "API_KEY" in events[-1]["error"]
+
+
+def test_run_stream_denied_short_circuits_before_any_llm_call():
+    policy = PolicyEngine(make_seed_rules())
+    memory = MemoryStore()
+    orchestrator = MetaOrchestrator()
+    runner = AgentRunner(policy=policy, memory=memory, orchestrator=orchestrator)
+    with patch("omni.agents.runner.stream_llm") as mock_stream:
+        with patch.object(policy, "evaluate") as mock_eval:
+            mock_eval.return_value.allowed = False
+            mock_eval.return_value.reason = "blocked for test"
+            events = list(runner.run_stream("hello"))
+    mock_stream.assert_not_called()
+    assert events == [{"type": "denied", "run_id": events[0]["run_id"], "error": "blocked for test"}]
+
+
+def test_run_stream_publishes_bus_events_matching_delta_order():
+    bus = InMemoryBus()
+    runner, _, _ = _runner(bus=bus)
+    with patch("omni.agents.runner.stream_llm", return_value=iter(["4", "2"])):
+        events = list(runner.run_stream("the answer?", session_id="alice"))
+    run_id = events[-1]["run_id"]
+    subjects = [s for s, _ in bus.published]
+    assert f"agent.{run_id}.thinking" in subjects
+    assert f"agent.{run_id}.completed" in subjects
+    completed_payload = next(p for s, p in bus.published if s == f"agent.{run_id}.completed")
+    assert completed_payload["answer"] == "42"
