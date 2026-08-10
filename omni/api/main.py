@@ -19,7 +19,7 @@ import asyncio
 import os
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -72,6 +72,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ------------------------------------------------------------ admin guard
+# Mutating admin actions (policy approval, lockdown) are otherwise reachable
+# by anyone who knows the API URL — CORS allows any origin and there's no
+# session concept at this layer. When ADMIN_API_KEY is set, these endpoints
+# require it via X-Admin-Key; a caller (e.g. the frontend's admin dashboard)
+# holds it server-side only, never in the browser. Left unset, the
+# endpoints behave exactly as before (open) — set it before treating this
+# as real access control.
+def require_admin_key(x_admin_key: str | None = Header(default=None)) -> None:
+    expected = os.environ.get("ADMIN_API_KEY")
+    if expected and x_admin_key != expected:
+        raise HTTPException(403, "invalid or missing X-Admin-Key")
+
 
 # ------------------------------------------------------------ subsystems
 ledger = ReplayLedger()
@@ -295,7 +309,7 @@ def policy_evaluate(body: PolicyEvaluateBody):
     return policy.evaluate(body.principal, body.action, body.resource, body.cost, body.calls)
 
 
-@app.post("/policy/approve/{decision_id}")
+@app.post("/policy/approve/{decision_id}", dependencies=[Depends(require_admin_key)])
 def policy_approve(decision_id: str, approver_role: str) -> dict:
     try:
         return policy.approve(decision_id, approver_role).model_dump()
@@ -318,7 +332,7 @@ def policy_add_limit(limit: LimitPolicy) -> LimitPolicy:
     return policy.add_limit(limit)
 
 
-@app.post("/policy/lockdown")
+@app.post("/policy/lockdown", dependencies=[Depends(require_admin_key)])
 def policy_lockdown(enabled: bool) -> dict:
     return {"lockdown": policy.set_lockdown(enabled)}
 

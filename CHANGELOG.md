@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.10.0] — 2026-08-10
+
+### Added — Admin action guard + keep-alive
+- `omni/api/main.py` — `require_admin_key()`: `POST /policy/approve/{id}`
+  and `POST /policy/lockdown` now require an `X-Admin-Key` header matching
+  the `ADMIN_API_KEY` env var, when that var is set. Unset (the default
+  until it's configured in production) leaves both endpoints exactly as
+  open as before — this is additive, not a breaking change. Closes the gap
+  where a frontend admin dashboard's login screen could visually gate an
+  action that the backend itself still accepted from anyone.
+- `.github/workflows/keep-alive.yml` — pings the deployed API every 10
+  minutes so Render's free-tier idle sleep doesn't cold-start the very
+  first request after a quiet period (this is what broke the Mission
+  Control live feed and chat's first message after inactivity).
+- Tests: `tests/test_admin_guard.py` — 6 new tests covering open-by-default,
+  missing/wrong key rejection, and correct-key acceptance for both guarded
+  endpoints. Suite: 176 tests passing.
+
 ## [0.9.0] — 2026-08-10
 
 ### Added — Streaming agent responses (`POST /agent/run/stream`)
