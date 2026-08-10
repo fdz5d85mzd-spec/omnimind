@@ -18,7 +18,9 @@ from __future__ import annotations
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Iterator
+from zoneinfo import ZoneInfo
 
 from omni.agents.llm import LLMError, LLMNotConfigured, call_llm, stream_llm
 from omni.contracts.agent import AgentType, TaskSpec
@@ -28,11 +30,23 @@ from omni.memory.store import MemoryStore
 from omni.orchestrator.engine import MetaOrchestrator
 from omni.policy.engine import PolicyEngine
 
-SYSTEM_PROMPT = (
+_BASE_SYSTEM_PROMPT = (
     "You are the OmniMind agent, part of an autonomous, self-evolving AI "
     "operating system. Answer the user's request directly and usefully: "
     "research, explain, draft, or plan, as asked. Be concrete and concise."
 )
+
+
+def _system_prompt() -> str:
+    # The model has no built-in clock, so "what's today's date" or "who's
+    # celebrating today" fails unless the real current date is handed to it
+    # on every request. Athens time since the product's audience is Greek.
+    now = datetime.now(ZoneInfo("Europe/Athens"))
+    return (
+        f"{_BASE_SYSTEM_PROMPT}\n\n"
+        f"Current date and time: {now.strftime('%A, %d %B %Y, %H:%M')} "
+        "(Europe/Athens)."
+    )
 
 
 @dataclass
@@ -125,7 +139,7 @@ class AgentRunner:
 
         self._publish(setup.run_id, session_id, "thinking", {})
         try:
-            answer = call_llm(prompt, system=SYSTEM_PROMPT)
+            answer = call_llm(prompt, system=_system_prompt())
         except (LLMNotConfigured, LLMError) as e:
             self._orchestrator.complete(setup.task_id, result={"error": str(e)})
             self._publish(setup.run_id, session_id, "failed", {"error": str(e)})
@@ -167,7 +181,7 @@ class AgentRunner:
         self._publish(setup.run_id, session_id, "thinking", {})
         chunks: list[str] = []
         try:
-            for delta in stream_llm(prompt, system=SYSTEM_PROMPT):
+            for delta in stream_llm(prompt, system=_system_prompt()):
                 chunks.append(delta)
                 yield {"type": "delta", "text": delta}
         except (LLMNotConfigured, LLMError) as e:
