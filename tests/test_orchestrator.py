@@ -95,3 +95,18 @@ def test_report_shape():
     assert report["tasks_total"] == 1
     assert "predicted_tasks_next_10m" in report
     assert "bottlenecks" in report
+    assert report["tasks_failed"] == 0
+
+
+def test_report_counts_failed_tasks_separately_from_completed():
+    o = MetaOrchestrator()
+    o.register_agent("w1")
+    ok = o.submit(TaskSpec(name="ok"))
+    bad = o.submit(TaskSpec(name="bad"))
+    o.assign(ok.id)
+    o.assign(bad.id)
+    o.complete(ok.id, result={"answer": "done"})
+    o.fail(bad.id, error="boom")
+    report = o.report()
+    assert report["tasks_completed"] == 1
+    assert report["tasks_failed"] == 1

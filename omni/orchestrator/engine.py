@@ -192,6 +192,24 @@ class MetaOrchestrator:
                     agent.load = max(0.0, agent.load - 0.1)
             return task
 
+    def fail(self, task_id: str, error: str, cost: float = 0.0) -> TaskSpec:
+        """Same bookkeeping as complete() (releases the agent, records
+        cost), but marks the task FAILED instead of COMPLETED -- so a real
+        LLM/provider error is distinguishable from a real answer in
+        report()'s tasks_failed count, not just buried inside `result`."""
+        with self._lock:
+            task = self._tasks[task_id]
+            task.status = TaskStatus.FAILED
+            task.result = {"error": error}
+            task.finished_at = datetime.now(timezone.utc)
+            if task.assignee:
+                agent = self._agents.get(task.assignee)
+                if agent:
+                    agent.queue_depth = max(0, agent.queue_depth - 1)
+                    agent.cost_spent += cost
+                    agent.load = max(0.0, agent.load - 0.1)
+            return task
+
     # ------------------------------------------------------------ monitoring
     def detect_bottlenecks(self, load_threshold: float = 0.8, queue_threshold: int = 10) -> list[BottleneckView]:
         with self._lock:
@@ -333,6 +351,7 @@ class MetaOrchestrator:
                 "tasks_total": len(self._tasks),
                 "tasks_queued": len([t for t in self._tasks.values() if t.status == TaskStatus.QUEUED]),
                 "tasks_completed": len([t for t in self._tasks.values() if t.status == TaskStatus.COMPLETED]),
+                "tasks_failed": len([t for t in self._tasks.values() if t.status == TaskStatus.FAILED]),
                 "avg_load": round(cpu, 3),
                 "predicted_tasks_next_10m": self.predict_next_tasks(10),
                 "bottlenecks": len(self.detect_bottlenecks()),

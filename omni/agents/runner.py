@@ -217,7 +217,7 @@ class AgentRunner:
         try:
             answer = call_llm(prompt, system=_system_prompt(setup.agent_skills), model=setup.model)
         except (LLMNotConfigured, LLMError) as e:
-            self._orchestrator.complete(setup.task_id, result={"error": str(e)})
+            self._orchestrator.fail(setup.task_id, error=str(e))
             self._publish(setup.run_id, session_id, "failed", {"error": str(e)})
             return AgentRunResult(
                 run_id=setup.run_id, status="failed", prompt=prompt, task_id=setup.task_id, error=str(e)
@@ -265,7 +265,7 @@ class AgentRunner:
                 chunks.append(delta)
                 yield {"type": "delta", "text": delta}
         except (LLMNotConfigured, LLMError) as e:
-            self._orchestrator.complete(setup.task_id, result={"error": str(e)})
+            self._orchestrator.fail(setup.task_id, error=str(e))
             self._publish(setup.run_id, session_id, "failed", {"error": str(e)})
             yield {"type": "failed", "run_id": setup.run_id, "error": str(e)}
             return

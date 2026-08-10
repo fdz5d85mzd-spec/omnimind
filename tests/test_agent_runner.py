@@ -86,7 +86,8 @@ def test_llm_error_is_reported_not_swallowed():
     assert result.status == "failed"
     assert "500" in result.error
     task = next(t for t in orchestrator.tasks() if t.id == result.task_id)
-    assert task.status.value == "failed" or task.result == {"error": result.error}
+    assert task.status.value == "failed"
+    assert task.result == {"error": result.error}
 
 
 def test_two_sessions_get_independent_run_ids_and_memory_keys():
