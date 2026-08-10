@@ -50,7 +50,7 @@ def test_run_publishes_live_stages_to_the_bus():
     bus = InMemoryBus()
     runner, _, _ = _runner(bus=bus)
     with patch("omni.agents.runner.call_llm", return_value="42"):
-        result = runner.run("the answer to everything?")
+        result = runner.run("the answer to everything?", session_id="alice")
     subjects = [s for s, _ in bus.published]
     assert f"agent.{result.run_id}.started" in subjects
     assert f"agent.{result.run_id}.policy_evaluated" in subjects
@@ -58,6 +58,22 @@ def test_run_publishes_live_stages_to_the_bus():
     assert f"agent.{result.run_id}.task_assigned" in subjects
     assert f"agent.{result.run_id}.thinking" in subjects
     assert f"agent.{result.run_id}.completed" in subjects
+    # every event carries the session_id so a multi-user stream can be
+    # filtered client-side to just the caller's own run
+    assert all(payload["session_id"] == "alice" for _, payload in bus.published)
+
+
+def test_concurrent_sessions_are_distinguishable_on_the_bus():
+    bus = InMemoryBus()
+    runner, _, _ = _runner(bus=bus)
+    with patch("omni.agents.runner.call_llm", side_effect=["a1", "a2"]):
+        r1 = runner.run("q1", session_id="alice")
+        r2 = runner.run("q2", session_id="bob")
+    alice_events = [(s, p) for s, p in bus.published if p["session_id"] == "alice"]
+    bob_events = [(s, p) for s, p in bus.published if p["session_id"] == "bob"]
+    assert all(r1.run_id in s for s, _ in alice_events)
+    assert all(r2.run_id in s for s, _ in bob_events)
+    assert r1.run_id != r2.run_id
 
 
 def test_llm_error_is_reported_not_swallowed():

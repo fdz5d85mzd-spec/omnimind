@@ -66,9 +66,9 @@ class AgentRunner:
         self._orchestrator = orchestrator
         self._bus = bus
 
-    def _publish(self, run_id: str, stage: str, payload: dict[str, Any]) -> None:
+    def _publish(self, run_id: str, session_id: str, stage: str, payload: dict[str, Any]) -> None:
         if self._bus is not None:
-            self._bus.publish(f"agent.{run_id}.{stage}", payload)
+            self._bus.publish(f"agent.{run_id}.{stage}", {"session_id": session_id, **payload})
 
     def run(self, prompt: str, session_id: str = "anonymous") -> AgentRunResult:
         run_id = f"run_{uuid.uuid4().hex[:10]}"
@@ -76,12 +76,12 @@ class AgentRunner:
         principal = Principal(id=f"web-{session_id}", roles=["web-user"])
         resource = Resource(type="agent_run", attributes={"risk_level": "low"})
 
-        self._publish(run_id, "started", {"prompt": prompt})
+        self._publish(run_id, session_id, "started", {"prompt": prompt})
 
         decision = self._policy.evaluate(principal, "agent.run", resource)
-        self._publish(run_id, "policy_evaluated", {"allowed": decision.allowed, "reason": decision.reason})
+        self._publish(run_id, session_id, "policy_evaluated", {"allowed": decision.allowed, "reason": decision.reason})
         if not decision.allowed:
-            self._publish(run_id, "denied", {"reason": decision.reason})
+            self._publish(run_id, session_id, "denied", {"reason": decision.reason})
             return AgentRunResult(run_id=run_id, status="denied", prompt=prompt, error=decision.reason)
 
         entry = self._memory.write(
@@ -90,7 +90,7 @@ class AgentRunner:
             agent_id=principal.id,
             reason="user request",
         )
-        self._publish(run_id, "memory_stored", {"key": entry.key, "version": entry.version})
+        self._publish(run_id, session_id, "memory_stored", {"key": entry.key, "version": entry.version})
 
         agent = self._orchestrator.register_agent(
             f"web-agent-{run_id[-6:]}", skills=["chat"], agent_type=AgentType.WORKER
@@ -99,14 +99,14 @@ class AgentRunner:
             TaskSpec(name=f"agent.run {run_id}", risk_level="low", payload={"prompt": prompt})
         )
         self._orchestrator.assign(task.id)
-        self._publish(run_id, "task_assigned", {"task_id": task.id, "agent_id": agent.id})
+        self._publish(run_id, session_id, "task_assigned", {"task_id": task.id, "agent_id": agent.id})
 
-        self._publish(run_id, "thinking", {})
+        self._publish(run_id, session_id, "thinking", {})
         try:
             answer = call_llm(prompt, system=SYSTEM_PROMPT)
         except (LLMNotConfigured, LLMError) as e:
             self._orchestrator.complete(task.id, result={"error": str(e)})
-            self._publish(run_id, "failed", {"error": str(e)})
+            self._publish(run_id, session_id, "failed", {"error": str(e)})
             return AgentRunResult(run_id=run_id, status="failed", prompt=prompt, task_id=task.id, error=str(e))
 
         self._memory.write(
@@ -114,7 +114,7 @@ class AgentRunner:
         )
         self._orchestrator.complete(task.id, result={"answer": answer})
         duration_ms = (time.monotonic() - started) * 1000
-        self._publish(run_id, "completed", {"answer": answer, "duration_ms": duration_ms})
+        self._publish(run_id, session_id, "completed", {"answer": answer, "duration_ms": duration_ms})
 
         return AgentRunResult(
             run_id=run_id, status="completed", prompt=prompt, answer=answer, task_id=task.id, duration_ms=duration_ms
