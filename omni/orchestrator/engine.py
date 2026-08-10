@@ -133,6 +133,10 @@ class MetaOrchestrator:
         with self._lock:
             return list(self._agents.values())
 
+    def get_agent(self, agent_id: str) -> AgentSpec | None:
+        with self._lock:
+            return self._agents.get(agent_id)
+
     def tasks(self) -> list[TaskSpec]:
         with self._lock:
             return list(self._tasks.values())

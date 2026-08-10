@@ -23,6 +23,7 @@ from typing import Any, Iterator
 from zoneinfo import ZoneInfo
 
 from omni.agents.llm import LLMError, LLMNotConfigured, call_llm, stream_llm
+from omni.agents.router import classify_skills
 from omni.contracts.agent import AgentType, TaskSpec
 from omni.contracts.policy import Principal, Resource
 from omni.fleet.bus import FleetBus
@@ -36,17 +37,39 @@ _BASE_SYSTEM_PROMPT = (
     "research, explain, draft, or plan, as asked. Be concrete and concise."
 )
 
+# One line of framing per specialist skill, appended when the orchestrator
+# actually routed the request to that kind of fleet agent (see
+# fleet_seed.SEED_ROSTER for the roster this has to line up with) -- so a
+# request routed to the Code Agent genuinely reads differently than one
+# routed to the Research Agent, instead of every specialist sharing one
+# generic prompt regardless of who the orchestrator says is handling it.
+_SKILL_FRAMING: dict[str, str] = {
+    "coding": "You're acting as the fleet's Code Agent: prioritize correct, runnable code, name concrete pitfalls, and keep prose around code minimal.",
+    "code-review": "You're acting as the fleet's Code Agent doing a code review: call out bugs, risks, and concrete fixes, not general style opinions.",
+    "research": "You're acting as the fleet's Research Agent: prioritize verifiable facts, flag uncertainty explicitly, and cite what kind of source would confirm each claim.",
+    "writing": "You're acting as the fleet's Writer Agent: prioritize clear, well-structured prose in the tone the request implies.",
+    "translation": "You're acting as the fleet's Translator: prioritize accurate, natural translation over literal word-for-word conversion.",
+    "planning": "You're acting as the fleet's Planner Agent: structure the answer as concrete, ordered steps with dependencies made explicit.",
+    "data-analysis": "You're acting as the fleet's Data Analyst: prioritize precise numbers and caveat any inference that isn't directly supported by what's given.",
+    "summarization": "You're acting as the fleet's Summarizer: prioritize brevity and cutting anything not essential to the source.",
+}
 
-def _system_prompt() -> str:
+
+def _system_prompt(agent_skills: list[str] | None = None) -> str:
     # The model has no built-in clock, so "what's today's date" or "who's
     # celebrating today" fails unless the real current date is handed to it
     # on every request. Athens time since the product's audience is Greek.
     now = datetime.now(ZoneInfo("Europe/Athens"))
-    return (
-        f"{_BASE_SYSTEM_PROMPT}\n\n"
-        f"Current date and time: {now.strftime('%A, %d %B %Y, %H:%M')} "
-        "(Europe/Athens)."
-    )
+    parts = [
+        _BASE_SYSTEM_PROMPT,
+        f"Current date and time: {now.strftime('%A, %d %B %Y, %H:%M')} (Europe/Athens).",
+    ]
+    for skill in agent_skills or []:
+        framing = _SKILL_FRAMING.get(skill)
+        if framing:
+            parts.append(framing)
+            break  # one specialist framing is enough; skills are priority-ordered
+    return "\n\n".join(parts)
 
 
 @dataclass
@@ -57,6 +80,7 @@ class AgentRunResult:
     answer: str | None = None
     error: str | None = None
     task_id: str | None = None
+    agent_name: str | None = None
     duration_ms: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
@@ -67,6 +91,7 @@ class AgentRunResult:
             "answer": self.answer,
             "error": self.error,
             "task_id": self.task_id,
+            "agent_name": self.agent_name,
             "duration_ms": self.duration_ms,
         }
 
@@ -75,6 +100,8 @@ class AgentRunResult:
 class _Setup:
     run_id: str
     agent_id: str
+    agent_name: str
+    agent_skills: list[str]
     task_id: str
     started: float
 
@@ -121,25 +148,55 @@ class AgentRunner:
         )
         self._publish(run_id, session_id, "memory_stored", {"key": entry.key, "version": entry.version})
 
-        agent = self._orchestrator.register_agent(
-            f"web-agent-{run_id[-6:]}", skills=["chat"], agent_type=AgentType.WORKER
-        )
+        # Route to a real specialist from the seeded fleet (fleet_seed.py)
+        # by what the prompt actually needs, instead of spinning up a fresh
+        # disposable worker per request that always wins assignment purely
+        # by having zero load. required_skills takes the single best match
+        # -- fleet specialists each carry one primary skill, so asking for
+        # more than one at once would just make every agent ineligible.
+        required_skills = classify_skills(prompt)[:1]
         task = self._orchestrator.submit(
-            TaskSpec(name=f"agent.run {run_id}", risk_level="low", payload={"prompt": prompt})
+            TaskSpec(
+                name=f"agent.run {run_id}",
+                risk_level="low",
+                payload={"prompt": prompt},
+                required_skills=required_skills,
+            )
         )
-        self._orchestrator.assign(task.id)
-        self._publish(run_id, session_id, "task_assigned", {"task_id": task.id, "agent_id": agent.id})
+        agent_id = self._orchestrator.assign(task.id)
+        agent = self._orchestrator.get_agent(agent_id) if agent_id else None
+        if agent is None:
+            # No seeded agent was free/capable (e.g. fresh test orchestrator
+            # with no fleet registered yet) -- fall back to a disposable
+            # worker so the request is never simply dropped. Carries
+            # required_skills itself so the still-QUEUED task can actually
+            # match it on this second assign() pass.
+            agent = self._orchestrator.register_agent(
+                f"web-agent-{run_id[-6:]}", skills=required_skills or ["chat"], agent_type=AgentType.WORKER
+            )
+            self._orchestrator.assign(task.id)
+        self._publish(
+            run_id, session_id, "task_assigned",
+            {"task_id": task.id, "agent_id": agent.id, "agent_name": agent.name},
+        )
 
-        return _Setup(run_id=run_id, agent_id=agent.id, task_id=task.id, started=started)
+        return _Setup(
+            run_id=run_id,
+            agent_id=agent.id,
+            agent_name=agent.name,
+            agent_skills=agent.skills,
+            task_id=task.id,
+            started=started,
+        )
 
     def run(self, prompt: str, session_id: str = "anonymous") -> AgentRunResult:
         setup = self._setup(prompt, session_id)
         if isinstance(setup, AgentRunResult):
             return setup
 
-        self._publish(setup.run_id, session_id, "thinking", {})
+        self._publish(setup.run_id, session_id, "thinking", {"agent_name": setup.agent_name})
         try:
-            answer = call_llm(prompt, system=_system_prompt())
+            answer = call_llm(prompt, system=_system_prompt(setup.agent_skills))
         except (LLMNotConfigured, LLMError) as e:
             self._orchestrator.complete(setup.task_id, result={"error": str(e)})
             self._publish(setup.run_id, session_id, "failed", {"error": str(e)})
@@ -155,7 +212,10 @@ class AgentRunner:
         )
         self._orchestrator.complete(setup.task_id, result={"answer": answer})
         duration_ms = (time.monotonic() - setup.started) * 1000
-        self._publish(setup.run_id, session_id, "completed", {"answer": answer, "duration_ms": duration_ms})
+        self._publish(
+            setup.run_id, session_id, "completed",
+            {"answer": answer, "duration_ms": duration_ms, "agent_name": setup.agent_name},
+        )
 
         return AgentRunResult(
             run_id=setup.run_id,
@@ -163,6 +223,7 @@ class AgentRunner:
             prompt=prompt,
             answer=answer,
             task_id=setup.task_id,
+            agent_name=setup.agent_name,
             duration_ms=duration_ms,
         )
 
@@ -178,10 +239,10 @@ class AgentRunner:
             yield {"type": setup.status, "run_id": setup.run_id, "error": setup.error}
             return
 
-        self._publish(setup.run_id, session_id, "thinking", {})
+        self._publish(setup.run_id, session_id, "thinking", {"agent_name": setup.agent_name})
         chunks: list[str] = []
         try:
-            for delta in stream_llm(prompt, system=_system_prompt()):
+            for delta in stream_llm(prompt, system=_system_prompt(setup.agent_skills)):
                 chunks.append(delta)
                 yield {"type": "delta", "text": delta}
         except (LLMNotConfigured, LLMError) as e:
@@ -199,5 +260,14 @@ class AgentRunner:
         )
         self._orchestrator.complete(setup.task_id, result={"answer": answer})
         duration_ms = (time.monotonic() - setup.started) * 1000
-        self._publish(setup.run_id, session_id, "completed", {"answer": answer, "duration_ms": duration_ms})
-        yield {"type": "done", "run_id": setup.run_id, "answer": answer, "duration_ms": duration_ms}
+        self._publish(
+            setup.run_id, session_id, "completed",
+            {"answer": answer, "duration_ms": duration_ms, "agent_name": setup.agent_name},
+        )
+        yield {
+            "type": "done",
+            "run_id": setup.run_id,
+            "answer": answer,
+            "duration_ms": duration_ms,
+            "agent_name": setup.agent_name,
+        }

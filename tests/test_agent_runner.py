@@ -3,6 +3,7 @@ Policy Engine, Meta-Orchestrator, Versioned Memory, and the fleet bus."""
 
 from unittest.mock import patch
 
+from omni.agents.fleet_seed import seed_fleet
 from omni.agents.llm import LLMError, LLMNotConfigured
 from omni.agents.runner import AgentRunner
 from omni.fleet.bus import InMemoryBus
@@ -11,10 +12,12 @@ from omni.orchestrator.engine import MetaOrchestrator
 from omni.policy.engine import PolicyEngine, make_seed_rules
 
 
-def _runner(bus=None):
+def _runner(bus=None, seeded=False):
     policy = PolicyEngine(make_seed_rules())
     memory = MemoryStore()
     orchestrator = MetaOrchestrator()
+    if seeded:
+        seed_fleet(orchestrator)
     return AgentRunner(policy=policy, memory=memory, orchestrator=orchestrator, bus=bus), memory, orchestrator
 
 
@@ -147,3 +150,58 @@ def test_run_stream_publishes_bus_events_matching_delta_order():
     assert f"agent.{run_id}.completed" in subjects
     completed_payload = next(p for s, p in bus.published if s == f"agent.{run_id}.completed")
     assert completed_payload["answer"] == "42"
+
+
+# ------------------------------------------------ real fleet skill routing
+def test_coding_prompt_is_routed_to_the_code_agent():
+    runner, _, orchestrator = _runner(seeded=True)
+    with patch("omni.agents.runner.call_llm", return_value="here's the fix") as mock_call:
+        result = runner.run("debug this python function for me", session_id="s1")
+    assert result.agent_name == "Code Agent"
+    # the specialist's own framing line actually reached the LLM call, not
+    # just a name attached after the fact
+    system_prompt = mock_call.call_args.kwargs["system"]
+    assert "Code Agent" in system_prompt
+
+    code_agent = next(a for a in orchestrator.agents() if a.name == "Code Agent")
+    assert code_agent.queue_depth == 0  # released after complete()
+
+
+def test_research_prompt_is_routed_to_the_research_agent():
+    runner, _, _ = _runner(seeded=True)
+    with patch("omni.agents.runner.call_llm", return_value="findings") as mock_call:
+        result = runner.run("research the causes of the 1929 crash", session_id="s1")
+    assert result.agent_name == "Research Agent"
+    assert "Research Agent" in mock_call.call_args.kwargs["system"]
+
+
+def test_unrouted_prompt_still_completes_via_some_capable_agent():
+    runner, _, _ = _runner(seeded=True)
+    with patch("omni.agents.runner.call_llm", return_value="hi!"):
+        result = runner.run("hello there", session_id="s1")
+    assert result.status == "completed"
+    assert result.agent_name  # some real fleet agent handled it, not None
+
+    # the 40-agent roster is reused across requests instead of growing one
+    # disposable "web-agent-*" per message
+    fresh_orchestrator = MetaOrchestrator()
+    seed_fleet(fresh_orchestrator)
+    before = len(fresh_orchestrator.agents())
+    policy = PolicyEngine(make_seed_rules())
+    memory = MemoryStore()
+    runner2 = AgentRunner(policy=policy, memory=memory, orchestrator=fresh_orchestrator)
+    with patch("omni.agents.runner.call_llm", return_value="ok"):
+        runner2.run("hello")
+        runner2.run("hello again")
+    assert len(fresh_orchestrator.agents()) == before
+
+
+def test_falls_back_to_a_disposable_worker_when_fleet_is_not_seeded():
+    # no seed_fleet() call -- orchestrator starts with zero agents, exactly
+    # like every other test in this file predating fleet-aware routing
+    runner, _, orchestrator = _runner(seeded=False)
+    with patch("omni.agents.runner.call_llm", return_value="ok"):
+        result = runner.run("debug this code", session_id="s1")
+    assert result.status == "completed"
+    assert result.agent_name is not None
+    assert len(orchestrator.agents()) == 1
