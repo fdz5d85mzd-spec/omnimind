@@ -14,4 +14,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Ping the control plane
-        run: curl -sf --max-time 20 https://api.origox.xyz/ -o /dev/null
+        run: curl -sf --max-time 20 https://api.omnimindai.app/ -o /dev/null
