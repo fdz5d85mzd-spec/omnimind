@@ -27,20 +27,24 @@ class LLMError(RuntimeError):
     """The configured LLM provider returned an error or was unreachable."""
 
 
-def call_llm(prompt: str, system: str = "", max_tokens: int = 1200, timeout: float = 60.0) -> str:
+def call_llm(
+    prompt: str, system: str = "", max_tokens: int = 1200, timeout: float = 60.0, model: str | None = None
+) -> str:
     if os.environ.get("ANTHROPIC_API_KEY"):
-        return _call_anthropic(prompt, system, max_tokens, timeout)
+        return _call_anthropic(prompt, system, max_tokens, timeout, model)
     if os.environ.get("OPENAI_API_KEY"):
         return _call_openai(prompt, system, max_tokens, timeout)
     raise LLMNotConfigured("Set OPENAI_API_KEY or ANTHROPIC_API_KEY to enable the agent runner.")
 
 
-def stream_llm(prompt: str, system: str = "", max_tokens: int = 1200, timeout: float = 90.0) -> Iterator[str]:
+def stream_llm(
+    prompt: str, system: str = "", max_tokens: int = 1200, timeout: float = 90.0, model: str | None = None
+) -> Iterator[str]:
     """Yield the answer as it's generated (text deltas), instead of waiting
     for the full completion — this is what makes the chat UI feel like
     Claude/DeepSeek instead of a blocking spinner."""
     if os.environ.get("ANTHROPIC_API_KEY"):
-        yield from _stream_anthropic(prompt, system, max_tokens, timeout)
+        yield from _stream_anthropic(prompt, system, max_tokens, timeout, model)
     elif os.environ.get("OPENAI_API_KEY"):
         yield from _stream_openai(prompt, system, max_tokens, timeout)
     else:
@@ -76,8 +80,8 @@ def _call_openai(prompt: str, system: str, max_tokens: int, timeout: float) -> s
     return data["choices"][0]["message"]["content"]
 
 
-def _call_anthropic(prompt: str, system: str, max_tokens: int, timeout: float) -> str:
-    model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")
+def _call_anthropic(prompt: str, system: str, max_tokens: int, timeout: float, model: str | None = None) -> str:
+    model = model or os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5")
     body: dict = {"model": model, "max_tokens": max_tokens, "messages": [{"role": "user", "content": prompt}]}
     if system:
         body["system"] = system
@@ -126,8 +130,10 @@ def _sse_events(resp) -> Iterator[dict]:
         resp.close()
 
 
-def _stream_anthropic(prompt: str, system: str, max_tokens: int, timeout: float) -> Iterator[str]:
-    model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")
+def _stream_anthropic(
+    prompt: str, system: str, max_tokens: int, timeout: float, model: str | None = None
+) -> Iterator[str]:
+    model = model or os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5")
     body: dict = {"model": model, "max_tokens": max_tokens, "messages": [{"role": "user", "content": prompt}]}
     if system:
         body["system"] = system

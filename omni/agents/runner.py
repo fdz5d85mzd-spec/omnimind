@@ -15,6 +15,7 @@ typing starts immediately instead of waiting for the full completion.
 
 from __future__ import annotations
 
+import os
 import time
 import uuid
 from dataclasses import dataclass
@@ -53,6 +54,22 @@ _SKILL_FRAMING: dict[str, str] = {
     "data-analysis": "You're acting as the fleet's Data Analyst: prioritize precise numbers and caveat any inference that isn't directly supported by what's given.",
     "summarization": "You're acting as the fleet's Summarizer: prioritize brevity and cutting anything not essential to the source.",
 }
+
+
+# Tiered model routing: routine WORKER agents (logging, notifications,
+# triage, backups...) run high volume, low-stakes requests that don't need
+# a frontier model, so they're routed to the cheap/fast tier. Specialists
+# and the fleet leader (SUPERVISOR) do the actual product-facing work and
+# stay on the production tier. Both are env-overridable per deployment
+# without touching code, same convention as the old ANTHROPIC_MODEL var.
+_MODEL_HAIKU = os.environ.get("ANTHROPIC_MODEL_HAIKU", "claude-haiku-4-5-20251001")
+_MODEL_SONNET = os.environ.get("ANTHROPIC_MODEL_SONNET", "claude-sonnet-5")
+
+
+def _model_for(agent_type: AgentType) -> str:
+    if agent_type == AgentType.WORKER:
+        return _MODEL_HAIKU
+    return _MODEL_SONNET
 
 
 def _system_prompt(agent_skills: list[str] | None = None) -> str:
@@ -102,6 +119,7 @@ class _Setup:
     agent_id: str
     agent_name: str
     agent_skills: list[str]
+    model: str
     task_id: str
     started: float
 
@@ -185,6 +203,7 @@ class AgentRunner:
             agent_id=agent.id,
             agent_name=agent.name,
             agent_skills=agent.skills,
+            model=_model_for(agent.agent_type),
             task_id=task.id,
             started=started,
         )
@@ -196,7 +215,7 @@ class AgentRunner:
 
         self._publish(setup.run_id, session_id, "thinking", {"agent_name": setup.agent_name})
         try:
-            answer = call_llm(prompt, system=_system_prompt(setup.agent_skills))
+            answer = call_llm(prompt, system=_system_prompt(setup.agent_skills), model=setup.model)
         except (LLMNotConfigured, LLMError) as e:
             self._orchestrator.complete(setup.task_id, result={"error": str(e)})
             self._publish(setup.run_id, session_id, "failed", {"error": str(e)})
@@ -242,7 +261,7 @@ class AgentRunner:
         self._publish(setup.run_id, session_id, "thinking", {"agent_name": setup.agent_name})
         chunks: list[str] = []
         try:
-            for delta in stream_llm(prompt, system=_system_prompt(setup.agent_skills)):
+            for delta in stream_llm(prompt, system=_system_prompt(setup.agent_skills), model=setup.model):
                 chunks.append(delta)
                 yield {"type": "delta", "text": delta}
         except (LLMNotConfigured, LLMError) as e:

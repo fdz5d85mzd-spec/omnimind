@@ -162,9 +162,24 @@ def test_coding_prompt_is_routed_to_the_code_agent():
     # just a name attached after the fact
     system_prompt = mock_call.call_args.kwargs["system"]
     assert "Code Agent" in system_prompt
+    # a SPECIALIST does the actual product work on the production model tier
+    assert mock_call.call_args.kwargs["model"] == "claude-sonnet-5"
 
     code_agent = next(a for a in orchestrator.agents() if a.name == "Code Agent")
     assert code_agent.queue_depth == 0  # released after complete()
+
+
+def test_routine_worker_agent_runs_on_the_cheap_model_tier():
+    # "summary of" only matches the summarization pattern (not "writing",
+    # which "summarize this article" would also trip) -- routes to the
+    # Summarizer, a WORKER not a SPECIALIST
+    runner, _, orchestrator = _runner(seeded=True)
+    with patch("omni.agents.runner.call_llm", return_value="tl;dr") as mock_call:
+        result = runner.run("give me a summary of this", session_id="s1")
+    assert result.agent_name == "Summarizer"
+    agent = next(a for a in orchestrator.agents() if a.name == "Summarizer")
+    assert agent.agent_type.value == "worker"
+    assert mock_call.call_args.kwargs["model"] == "claude-haiku-4-5-20251001"
 
 
 def test_research_prompt_is_routed_to_the_research_agent():
