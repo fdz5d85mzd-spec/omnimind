@@ -411,6 +411,13 @@ def make_seed_rules() -> list[PolicyRule]:
             priority=75,
         ),
         PolicyRule(
+            id="rule_allow_learning_reflect",
+            action="learning.*",
+            effect="ALLOW",
+            roles=["operator", "system.admin"],
+            priority=70,
+        ),
+        PolicyRule(
             id="rule_deploy_admin",
             action="deploy",
             effect="ALLOW",

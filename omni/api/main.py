@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 
 from omni import __version__
 from omni.agents.fleet_seed import seed_fleet
+from omni.agents.reflection import ReflectionScheduler, run_reflection_cycle
 from omni.agents.runner import AgentRunner
 from omni.audit.ledger import ReplayLedger
 from omni.contracts.agent import TaskSpec
@@ -157,15 +158,27 @@ fleet_bus.subscribe(
 # static roster; it does real work on a real clock, not a fake heartbeat.
 fleet_scheduler = FleetScheduler(orchestrator, fleet_bus, interval_s=60.0)
 
+# Every SELF_REVIEW_INTERVAL_S (default 6h): the Learning Agent looks at
+# real fleet/task/policy metrics and, when something concrete stands out,
+# proposes an improvement through the Evolution Engine. It only ever
+# proposes — turning a proposal into a live change still needs a human
+# with the system.admin role to adopt and apply it via /evolution/apply.
+reflection_scheduler = ReflectionScheduler(
+    policy, memory, orchestrator, evolution, bus=fleet_bus,
+    interval_s=float(os.environ.get("SELF_REVIEW_INTERVAL_S", 21600)),
+)
+
 
 @app.on_event("startup")
 async def _start_fleet_scheduler() -> None:
     fleet_scheduler.start()
+    reflection_scheduler.start()
 
 
 @app.on_event("shutdown")
 async def _stop_fleet_scheduler() -> None:
     fleet_scheduler.stop()
+    reflection_scheduler.stop()
 
 
 @app.get("/")
@@ -665,6 +678,15 @@ def learning_trends(task_type: str | None = None) -> dict:
 @app.get("/learning/report")
 def learning_report() -> dict:
     return learning.improvement_report()
+
+
+@app.post("/learning/reflect")
+def learning_reflect() -> dict:
+    """Run one self-review cycle on demand (the same cycle ReflectionScheduler
+    runs every SELF_REVIEW_INTERVAL_S) -- proposes at most one improvement
+    via the Evolution Engine; never applies anything itself."""
+    result = run_reflection_cycle(policy, memory, orchestrator, evolution, bus=fleet_bus)
+    return vars(result)
 
 
 # ================================================================ TWIN
