@@ -1,5 +1,7 @@
 """Control-plane API smoke tests (live HTTP requests against FastAPI)."""
 
+from unittest.mock import patch
+
 from fastapi.testclient import TestClient
 
 from omni.api.main import app
@@ -108,3 +110,22 @@ def test_learning_ingest_and_report():
     r = client.get("/learning/report")
     assert r.status_code == 200
     assert r.json()["samples"] >= 1
+
+
+def test_integrations_status_reports_no_secrets():
+    with patch.dict("os.environ", {}, clear=True):
+        r = client.get("/integrations/status")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["llm_provider"] is None
+    assert body["admin_api_key_configured"] is False
+    assert body["nats_configured"] is False
+
+
+def test_integrations_status_reflects_configured_provider():
+    with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test", "ADMIN_API_KEY": "k"}, clear=True):
+        r = client.get("/integrations/status")
+    body = r.json()
+    assert body["llm_provider"] == "anthropic"
+    assert body["admin_api_key_configured"] is True
+    assert "sk-test" not in r.text

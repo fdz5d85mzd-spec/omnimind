@@ -180,6 +180,25 @@ def root() -> dict:
     }
 
 
+@app.get("/integrations/status")
+def integrations_status() -> dict:
+    """Which external integrations are actually configured — presence
+    only, never the key itself. Anthropic wins if both LLM keys are set
+    (matches omni.agents.llm's own selection order)."""
+    llm_provider = (
+        "anthropic"
+        if os.environ.get("ANTHROPIC_API_KEY")
+        else "openai"
+        if os.environ.get("OPENAI_API_KEY")
+        else None
+    )
+    return {
+        "llm_provider": llm_provider,
+        "admin_api_key_configured": bool(os.environ.get("ADMIN_API_KEY")),
+        "nats_configured": bool(os.environ.get("NATS_URL")),
+    }
+
+
 # ------------------------------------------------------------ request bodies
 class PolicyEvaluateBody(BaseModel):
     principal: Principal

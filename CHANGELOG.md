@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.12.0] — 2026-08-10
+
+### Added — Integration status endpoint
+- `GET /integrations/status` — reports which external integrations are
+  actually configured (`llm_provider`: anthropic/openai/null,
+  `admin_api_key_configured`, `nats_configured`) — presence only, never
+  the key value. Backs the frontend's real Integrations page rather than
+  hardcoded "connected" badges.
+- Tests: `tests/test_api.py` — reports nothing when unconfigured, reflects
+  the active provider when set, never leaks the key into the response.
+  Suite: 187 tests passing.
+
 ## [0.11.0] — 2026-08-10
 
 ### Added — Standing 40-agent fleet with a leader
