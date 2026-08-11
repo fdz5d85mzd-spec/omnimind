@@ -278,6 +278,10 @@ class AgentRegisterBody(BaseModel):
 class AgentRunBody(BaseModel):
     prompt: str
     session_id: str | None = None
+    # "Bring your own key" -- when set, this request is answered with the
+    # user's own provider key/quota instead of the org's, see omni/agents/llm.py.
+    user_api_key: str | None = None
+    user_api_provider: str | None = None
 
 
 class TaskHeartbeatBody(BaseModel):
@@ -505,7 +509,12 @@ def orchestrator_predict(horizon_minutes: float = 10.0) -> dict:
 # Memory, publishing each stage live to /twin/stream — see omni/agents/.
 @app.post("/agent/run")
 def agent_run(body: AgentRunBody) -> dict:
-    result = agent_runner.run(body.prompt, session_id=body.session_id or "anonymous")
+    result = agent_runner.run(
+        body.prompt,
+        session_id=body.session_id or "anonymous",
+        user_api_key=body.user_api_key,
+        user_api_provider=body.user_api_provider,
+    )
     return result.to_dict()
 
 
@@ -517,7 +526,12 @@ def agent_run_stream(body: AgentRunBody):
     def events():
         import json as _json
 
-        for event in agent_runner.run_stream(body.prompt, session_id=body.session_id or "anonymous"):
+        for event in agent_runner.run_stream(
+            body.prompt,
+            session_id=body.session_id or "anonymous",
+            user_api_key=body.user_api_key,
+            user_api_provider=body.user_api_provider,
+        ):
             yield f"data: {_json.dumps(event)}\n\n"
 
     return StreamingResponse(events(), media_type="text/event-stream")

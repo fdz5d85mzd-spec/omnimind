@@ -208,14 +208,26 @@ class AgentRunner:
             started=started,
         )
 
-    def run(self, prompt: str, session_id: str = "anonymous") -> AgentRunResult:
+    def run(
+        self,
+        prompt: str,
+        session_id: str = "anonymous",
+        user_api_key: str | None = None,
+        user_api_provider: str | None = None,
+    ) -> AgentRunResult:
         setup = self._setup(prompt, session_id)
         if isinstance(setup, AgentRunResult):
             return setup
 
         self._publish(setup.run_id, session_id, "thinking", {"agent_name": setup.agent_name})
         try:
-            answer = call_llm(prompt, system=_system_prompt(setup.agent_skills), model=setup.model)
+            answer = call_llm(
+                prompt,
+                system=_system_prompt(setup.agent_skills),
+                model=setup.model,
+                user_api_key=user_api_key,
+                user_provider=user_api_provider,
+            )
         except (LLMNotConfigured, LLMError) as e:
             self._orchestrator.fail(setup.task_id, error=str(e))
             self._publish(setup.run_id, session_id, "failed", {"error": str(e)})
@@ -246,7 +258,13 @@ class AgentRunner:
             duration_ms=duration_ms,
         )
 
-    def run_stream(self, prompt: str, session_id: str = "anonymous") -> Iterator[dict[str, Any]]:
+    def run_stream(
+        self,
+        prompt: str,
+        session_id: str = "anonymous",
+        user_api_key: str | None = None,
+        user_api_provider: str | None = None,
+    ) -> Iterator[dict[str, Any]]:
         """Same pipeline as run(), but yields the answer as text deltas
         arrive from the LLM provider. Each yielded dict is one of:
           {"type": "delta", "text": str}
@@ -261,7 +279,13 @@ class AgentRunner:
         self._publish(setup.run_id, session_id, "thinking", {"agent_name": setup.agent_name})
         chunks: list[str] = []
         try:
-            for delta in stream_llm(prompt, system=_system_prompt(setup.agent_skills), model=setup.model):
+            for delta in stream_llm(
+                prompt,
+                system=_system_prompt(setup.agent_skills),
+                model=setup.model,
+                user_api_key=user_api_key,
+                user_provider=user_api_provider,
+            ):
                 chunks.append(delta)
                 yield {"type": "delta", "text": delta}
         except (LLMNotConfigured, LLMError) as e:

@@ -34,6 +34,41 @@ def test_openai_used_when_only_openai_key_set():
     m_openai.assert_called_once()
 
 
+def test_user_supplied_openai_key_wins_over_org_anthropic_key():
+    # "Bring your own key" always takes priority, even when the org has its
+    # own Anthropic key configured -- it's the user's own quota, not ours.
+    env = {"ANTHROPIC_API_KEY": "ak", "OPENAI_API_KEY": "ok"}
+    with patch.dict("os.environ", env, clear=True):
+        with patch("omni.agents.llm._call_openai", return_value="from user's own key") as m_openai:
+            with patch("omni.agents.llm._call_anthropic") as m_anth:
+                result = call_llm("hi", user_api_key="sk-user-own-key", user_provider="openai")
+    assert result == "from user's own key"
+    m_openai.assert_called_once_with("hi", "", 1200, 60.0, api_key="sk-user-own-key")
+    m_anth.assert_not_called()
+
+
+def test_user_supplied_key_ignored_for_unsupported_provider():
+    # Only "openai" is a recognized BYOK provider today -- anything else
+    # falls back to normal org-key selection instead of silently no-op'ing.
+    with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "ak"}, clear=True):
+        with patch("omni.agents.llm._call_anthropic", return_value="from org key") as m_anth:
+            result = call_llm("hi", user_api_key="sk-user-own-key", user_provider="gemini")
+    assert result == "from org key"
+    m_anth.assert_called_once()
+
+
+def test_stream_user_supplied_openai_key_wins():
+    lines = _sse({"choices": [{"delta": {"content": "hi"}}]})
+    with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "ak"}, clear=True):
+        with patch("urllib.request.urlopen", return_value=_FakeSSEResponse(lines)) as m_open:
+            chunks = list(stream_llm("hi", user_api_key="sk-user-own-key", user_provider="openai"))
+    assert chunks == ["hi"]
+    # Hit the OpenAI endpoint (not Anthropic's) using the user's key in the header.
+    sent_req = m_open.call_args[0][0]
+    assert sent_req.full_url == "https://api.openai.com/v1/chat/completions"
+    assert sent_req.headers["Authorization"] == "Bearer sk-user-own-key"
+
+
 class _FakeHTTPResponse:
     def __init__(self, body: bytes):
         self._body = body

@@ -28,8 +28,19 @@ class LLMError(RuntimeError):
 
 
 def call_llm(
-    prompt: str, system: str = "", max_tokens: int = 1200, timeout: float = 60.0, model: str | None = None
+    prompt: str,
+    system: str = "",
+    max_tokens: int = 1200,
+    timeout: float = 60.0,
+    model: str | None = None,
+    user_api_key: str | None = None,
+    user_provider: str | None = None,
 ) -> str:
+    # A caller-supplied key ("bring your own key") always wins: it's the
+    # user's own quota, not the org's, so it bypasses the normal
+    # Anthropic-then-OpenAI provider selection entirely.
+    if user_api_key and user_provider == "openai":
+        return _call_openai(prompt, system, max_tokens, timeout, api_key=user_api_key)
     if os.environ.get("ANTHROPIC_API_KEY"):
         return _call_anthropic(prompt, system, max_tokens, timeout, model)
     if os.environ.get("OPENAI_API_KEY"):
@@ -38,12 +49,20 @@ def call_llm(
 
 
 def stream_llm(
-    prompt: str, system: str = "", max_tokens: int = 1200, timeout: float = 90.0, model: str | None = None
+    prompt: str,
+    system: str = "",
+    max_tokens: int = 1200,
+    timeout: float = 90.0,
+    model: str | None = None,
+    user_api_key: str | None = None,
+    user_provider: str | None = None,
 ) -> Iterator[str]:
     """Yield the answer as it's generated (text deltas), instead of waiting
     for the full completion — this is what makes the chat UI feel like
     Claude/DeepSeek instead of a blocking spinner."""
-    if os.environ.get("ANTHROPIC_API_KEY"):
+    if user_api_key and user_provider == "openai":
+        yield from _stream_openai(prompt, system, max_tokens, timeout, api_key=user_api_key)
+    elif os.environ.get("ANTHROPIC_API_KEY"):
         yield from _stream_anthropic(prompt, system, max_tokens, timeout, model)
     elif os.environ.get("OPENAI_API_KEY"):
         yield from _stream_openai(prompt, system, max_tokens, timeout)
@@ -68,12 +87,12 @@ def _post_json(url: str, headers: dict, body: dict, timeout: float) -> dict:
         raise LLMError(f"LLM provider unreachable: {e}") from e
 
 
-def _call_openai(prompt: str, system: str, max_tokens: int, timeout: float) -> str:
+def _call_openai(prompt: str, system: str, max_tokens: int, timeout: float, api_key: str | None = None) -> str:
     model = os.environ.get("OPENAI_MODEL", "gpt-4o")
     messages = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": prompt}]
     data = _post_json(
         "https://api.openai.com/v1/chat/completions",
-        {"Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}"},
+        {"Authorization": f"Bearer {api_key or os.environ['OPENAI_API_KEY']}"},
         {"model": model, "messages": messages, "max_tokens": max_tokens},
         timeout,
     )
@@ -152,12 +171,12 @@ def _stream_anthropic(
             raise LLMError(f"Anthropic stream error: {evt.get('error')}")
 
 
-def _stream_openai(prompt: str, system: str, max_tokens: int, timeout: float) -> Iterator[str]:
+def _stream_openai(prompt: str, system: str, max_tokens: int, timeout: float, api_key: str | None = None) -> Iterator[str]:
     model = os.environ.get("OPENAI_MODEL", "gpt-4o")
     messages = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": prompt}]
     resp = _open_sse_stream(
         "https://api.openai.com/v1/chat/completions",
-        {"Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}"},
+        {"Authorization": f"Bearer {api_key or os.environ['OPENAI_API_KEY']}"},
         {"model": model, "messages": messages, "max_tokens": max_tokens},
         timeout,
     )
